@@ -12,13 +12,12 @@ This project standardizes the identification of vaccine targets from pathogen pr
 
 ## Overview
 
-**Challenge**
+**Challenge**:
 Vaccine target discovery often relies on fragmented tools, manual interpretation, and inconsistent analytical steps, limiting reproducibility and slowing iteration.
 
-**Approach**
+**Approach**:
 The pipeline unifies antigen screening, epitope identification, safety filtering, and population coverage modeling into a traceable end-to-end workflow that produces experimentally actionable candidates.
 
----
 
 ## Core Capabilities
 
@@ -30,11 +29,10 @@ The pipeline unifies antigen screening, epitope identification, safety filtering
 - Population HLA coverage optimization
 - Multi-epitope construct design
 
----
 
 ## Scientific Workflow
 ```
-Input: Pathogen proteome / protein sequences
+Input: Pathogen proteome/protein sequences
     |
 Antigen Screening
     |
@@ -48,7 +46,6 @@ Multi-Epitope Construct Design
     |
 Candidate Outputs
 ```
----
 
 ## Performance Snapshot
 
@@ -57,20 +54,16 @@ Candidate Outputs
 - Proteome-scale analysis in minutes
 - Low false-positive rate after filtering
 
----
-
 ## Technology Components
 
-**Immunoinformatics**
+**Immunoinformatics**:
 MHC binding predictors · B-cell epitope models · Protein localization tools
 
-**Processing**
+**Processing**:
 Containerized tool execution · Sequence analysis libraries · Structured outputs
 
-**Reference Data**
+**Reference Data**:
 Protein databases · HLA frequency datasets · Epitope repositories
-
----
 
 ## Example
 ```python
@@ -92,7 +85,6 @@ results = pipeline.run(
 constructs = results.get_final_constructs()
 protocols = results.get_experiment_protocols()
 ```
----
 
 ## Use Cases
 
@@ -111,15 +103,20 @@ protocols = results.get_experiment_protocols()
 - Comparative vaccine design analysis
 - Immunoinformatics tool benchmarking
 
----
+## Contributing
+
+We welcome contributions from the computational biology and vaccine development communities: 
+- **Bioinformaticians**: Tool integrations, algorithm improvements
+- **Immunologists**: Validation datasets, experimental feedback
+- **Software Engineers**: Infrastructure, performance optimization
 
 ## Contact
 
-Email: ask@kozi-ai.com
-Website: https://www.kozi-ai.com
+Email: ask@kozi-ai.com <br>
+Website: www.kozi-ai.com
 
-# License
+## License
 MIT License - see [LICENSE](LICENSE) for details.
 
-
+**Built with ❤️ for the global health community** <br>
 *Accelerating vaccine development through intelligent automation*
