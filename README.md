@@ -103,14 +103,25 @@ protocols = results.get_experiment_protocols()
 - Comparative vaccine design analysis
 - Immunoinformatics tool benchmarking
 
+## Status
+MVP-2: Core pipeline operational. T-cell prediction, B-cell prediction,
+safety screening, and population coverage all running on real APIs.
+Streamlit interface functional. JSON + CSV export working.
+
+Next: A playground with email-gated access, batch protein analysis,
+IEDB retry hardening, expanded B-cell consensus methods.
+
 ## Contributing
 
-We welcome contributions from the computational biology and vaccine development communities: 
+We welcome contributions from the computational biology and vaccine development communities:
 - **Bioinformaticians**: Tool integrations, algorithm improvements
 - **Immunologists**: Validation datasets, experimental feedback
 - **Software Engineers**: Infrastructure, performance optimization
 
 ## Contact
+
+Kozi AI - umukozi means "worker" in Kinyarwanda.
+We build agents that work so scientists can discover.
 
 Email: ask@kozi-ai.com <br>
 Website: www.kozi-ai.com
