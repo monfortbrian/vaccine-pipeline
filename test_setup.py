@@ -25,7 +25,7 @@ def test_basic_setup():
         candidate.add_decision("test", "advance", "testing the fix")
 
         print("Data models working - decisions append fixed!")
-        print(f" Decisions count: {len(candidate.decisions)}")
+        print(f"Decisions count: {len(candidate.decisions)}")
 
     except Exception as e:
         print(f"Data models failed: {e}")
