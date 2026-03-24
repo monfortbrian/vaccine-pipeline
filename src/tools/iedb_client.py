@@ -24,6 +24,7 @@ class IEDBClient:
         self.base_url = "http://tools-cluster-interface.iedb.org/tools_api"
         self.session = requests.Session()
         self.session.headers.update({"User-Agent": "Kozi-Pipeline/2.0"})
+        self.max_retries = 3
 
         self.mhc_i_alleles = [
             "HLA-A*01:01", "HLA-A*02:01", "HLA-A*03:01", "HLA-A*11:01", "HLA-A*24:02",
@@ -46,7 +47,16 @@ class IEDBClient:
             for i in range(0, len(alleles), chunk_size):
                 chunk = alleles[i:i+chunk_size]
                 try:
-                    epitopes = self._call_iedb_mhc_i(sequence, chunk, length)
+                    epitopes = self._call_with_retry(
+                        f"{self.base_url}/mhci/",
+                        {
+                            'method': 'netmhcpan_el',
+                            'sequence_text': f">query\n{sequence}",
+                            'allele': ','.join(chunk),
+                            'length': ','.join([str(length)] * len(chunk))
+                        },
+                        'CTL', length
+                    )
                     all_epitopes.extend(epitopes)
                     time.sleep(1.5)
                 except Exception as e:
@@ -65,7 +75,16 @@ class IEDBClient:
             for i in range(0, len(alleles), chunk_size):
                 chunk = alleles[i:i+chunk_size]
                 try:
-                    epitopes = self._call_iedb_mhc_ii(sequence, chunk, length)
+                    epitopes = self._call_with_retry(
+                        f"{self.base_url}/mhcii/",
+                        {
+                            'method': 'netmhciipan',
+                            'sequence_text': f">query\n{sequence}",
+                            'allele': ','.join(chunk),
+                            'length': ','.join([str(length)] * len(chunk))
+                        },
+                        'HTL', length
+                    )
                     all_epitopes.extend(epitopes)
                     time.sleep(1.5)
                 except Exception as e:
@@ -74,29 +93,26 @@ class IEDBClient:
         logger.info(f"Predicted {len(all_epitopes)} HTL epitopes")
         return all_epitopes
 
-    def _call_iedb_mhc_i(self, sequence: str, alleles: List[str], length: int) -> List[Dict[str, Any]]:
-        """Call IEDB MHC Class I API."""
-        data = {
-            'method': 'netmhcpan_el',
-            'sequence_text': f">query\n{sequence}",
-            'allele': ','.join(alleles),
-            'length': ','.join([str(length)] * len(alleles))
-        }
-        response = self.session.post(f"{self.base_url}/mhci/", data=data, timeout=120)
-        response.raise_for_status()
-        return self._parse_mhc_results(response.text, 'CTL', length)
+    def _call_with_retry(self, url: str, data: dict, epitope_type: str, length: int) -> List[Dict[str, Any]]:
+        """POST to IEDB with exponential backoff retry on failure."""
+        for attempt in range(self.max_retries):
+            try:
+                response = self.session.post(url, data=data, timeout=120)
+                response.raise_for_status()
 
-    def _call_iedb_mhc_ii(self, sequence: str, alleles: List[str], length: int) -> List[Dict[str, Any]]:
-        """Call IEDB MHC Class II API."""
-        data = {
-            'method': 'netmhciipan',
-            'sequence_text': f">query\n{sequence}",
-            'allele': ','.join(alleles),
-            'length': ','.join([str(length)] * len(alleles))
-        }
-        response = self.session.post(f"{self.base_url}/mhcii/", data=data, timeout=120)
-        response.raise_for_status()
-        return self._parse_mhc_results(response.text, 'HTL', length)
+                # IEDB sometimes returns HTML error pages with 200 status
+                if "<html" in response.text.lower()[:200]:
+                    raise ValueError("IEDB returned HTML error page instead of TSV")
+
+                return self._parse_mhc_results(response.text, epitope_type, length)
+
+            except Exception as e:
+                wait = (2 ** attempt) * 2  # 2s, 4s, 8s
+                if attempt < self.max_retries - 1:
+                    logger.debug(f"  IEDB retry {attempt+1}/{self.max_retries}: {e}")
+                    time.sleep(wait)
+                else:
+                    raise
 
     def _parse_mhc_results(self, response_text: str, epitope_type: str, length: int) -> List[Dict[str, Any]]:
         """Parse IEDB response using header-based column detection."""
@@ -191,7 +207,6 @@ class IEDBClient:
         return epitopes
 
     def test_connection(self) -> bool:
-        """Test IEDB API connection."""
         try:
             response = self.session.post(
                 f"{self.base_url}/mhci/",
