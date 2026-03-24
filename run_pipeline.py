@@ -14,6 +14,7 @@ Output:
 """
 
 from src.agents.predictors.coverage_agent import CoverageAgent
+import uuid
 from src.agents.predictors.safety_filter import SafetyFilterAgent
 from src.agents.predictors.bcell_predictor import BCellPredictorAgent
 from src.agents.predictors.tcell_predictor import TCellPredictorAgent
@@ -69,10 +70,6 @@ DEMO_PROTEINS = [
 # - PIPELINE-──────────────────────────────────────────────────────────
 
 class KoziMVP2Pipeline:
-    """
-    Orchestrates: N3 T-Cell -> N4 B-Cell -> N6 Safety -> N7 Coverage
-    """
-
     def __init__(self, output_dir: str = "results"):
         self.n3 = TCellPredictorAgent()
         self.n4 = BCellPredictorAgent()
@@ -80,6 +77,19 @@ class KoziMVP2Pipeline:
         self.n7 = CoverageAgent()
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        # Supabase persistence
+        self._db = None
+
+    @property
+    def db(self):
+        if self._db is None:
+            try:
+                from src.storage.supabase_client import db
+                self._db = db
+                logger.info("Supabase connected")
+            except Exception as e:
+                logger.warning(f"Supabase not available: {e}")
+        return self._db
 
     def run(self, candidates: List[CandidateProtein]) -> Dict[str, Any]:
         """Execute the full MVP-2 pipeline."""
@@ -122,6 +132,29 @@ class KoziMVP2Pipeline:
         print(f"   N7 completed in {n7_time:.1f}s")
 
         total_time = time.time() - start
+
+        # ── Save to Supabase ──
+        if self.db:
+            try:
+                run_id = str(uuid.uuid4())
+                from src.models.candidate import PipelineRun
+                pipeline_run = PipelineRun(
+                    run_id=run_id,
+                    pathogen_name=candidates[0].protein_name if candidates else "unknown",
+                    input_type="demo" if not hasattr(
+                        self, '_input_type') else self._input_type,
+                    raw_input=candidates[0].sequence[:100] if candidates else "",
+                    current_stage="completed",
+                    status="completed",
+                )
+                self.db.create_run(pipeline_run)
+                self.db.update_run_stage(run_id, "completed", "completed")
+                for candidate in candidates:
+                    self.db.save_candidate(run_id, candidate)
+                logger.info(f"Saved to Supabase: run {run_id}")
+            except Exception as e:
+                logger.warning(
+                    f"Supabase save failed (pipeline still succeeded): {e}")
 
         # - Build results-
         results = self._build_results(candidates, timestamp, total_time,
