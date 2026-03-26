@@ -1,2 +1,37 @@
+# Secrets
 .env
-.env.*
+.env.local
+.env*.local
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+dist/
+build/
+*.egg
+
+# Node / Next.js
+node_modules/
+frontend/.next/
+frontend/out/
+frontend/build/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Patch scripts (don't commit)
+patch*.sh
+setup-frontend.sh
+
+# Results (generated data)
+results/
