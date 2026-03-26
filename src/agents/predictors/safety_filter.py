@@ -56,7 +56,8 @@ class SafetyFilterAgent:
                     seen.add(ep.sequence)
                     unique_epitopes.append(ep)
 
-            logger.info(f"      Screening {len(unique_epitopes)} unique epitopes (parallel, {self.max_workers} workers)")
+            logger.info(
+                f"      Screening {len(unique_epitopes)} unique epitopes (parallel, {self.max_workers} workers)")
 
             # Screen in parallel
             results_map = {}
@@ -71,8 +72,10 @@ class SafetyFilterAgent:
                         verdict, flags = future.result()
                         results_map[ep.sequence] = (verdict, flags)
                     except Exception as e:
-                        logger.warning(f"      Safety screen error for {ep.sequence[:10]}...: {e}")
-                        results_map[ep.sequence] = ("flagged", [f"screening_error: {str(e)}"])
+                        logger.warning(
+                            f"      Safety screen error for {ep.sequence[:10]}...: {e}")
+                        results_map[ep.sequence] = (
+                            "flagged", [f"screening_error: {str(e)}"])
 
             # Apply results to ALL epitopes (including duplicates)
             safe_count = 0
@@ -80,7 +83,8 @@ class SafetyFilterAgent:
             fail_count = 0
 
             for ep in all_epitopes:
-                verdict, flags = results_map.get(ep.sequence, ("flagged", ["no_result"]))
+                verdict, flags = results_map.get(
+                    ep.sequence, ("flagged", ["no_result"]))
 
                 if verdict == "pass":
                     ep.allergenicity_safe = True
@@ -105,7 +109,8 @@ class SafetyFilterAgent:
                 fail_count=fail_count,
             )
 
-            logger.info(f"      {safe_count} safe | {flagged_count} flagged | {fail_count} failed")
+            logger.info(
+                f"      {safe_count} safe | {flagged_count} flagged | {fail_count} failed")
 
         logger.info(f"N6: Safety screening complete")
         return candidates
@@ -115,21 +120,21 @@ class SafetyFilterAgent:
         seq = epitope.sequence
         flags = []
 
-        # 1. Allergenicity — AllerTOP
+        # 1. Allergenicity - AllerTOP
         allertop = self._check_allertop(seq)
         if allertop == "ALLERGEN":
             flags.append("allertop_allergen")
         elif allertop == "unknown":
             flags.append("allertop_inconclusive")
 
-        # 2. Allergenicity — AllergenFP (dual check)
+        # 2. Allergenicity - AllergenFP (dual check)
         allergenfp = self._check_allergenfp(seq)
         if allergenfp == "ALLERGEN":
             flags.append("allergenfp_allergen")
         elif allergenfp == "unknown":
             flags.append("allergenfp_inconclusive")
 
-        # 3. Toxicity — ToxinPred
+        # 3. Toxicity - ToxinPred
         toxicity = self._check_toxinpred(seq)
         if toxicity == "Toxic":
             flags.append("toxinpred_toxic")
@@ -147,7 +152,7 @@ class SafetyFilterAgent:
         if not flags:
             return "pass", []
         elif any("toxic" in f for f in flags) or \
-             ("allertop_allergen" in flags and "allergenfp_allergen" in flags):
+                ("allertop_allergen" in flags and "allergenfp_allergen" in flags):
             return "fail", flags
         else:
             return "flagged", flags
@@ -198,7 +203,8 @@ class SafetyFilterAgent:
         try:
             resp = self.session.post(
                 "https://webs.iiitd.edu.in/raghava/toxinpred/multiple_formsubmit.php",
-                data={"seq": sequence, "method": "1", "eval": "10", "terminus": "N"},
+                data={"seq": sequence, "method": "1",
+                      "eval": "10", "terminus": "N"},
                 timeout=20,
             )
             resp.raise_for_status()

@@ -133,7 +133,7 @@ class KoziMVP2Pipeline:
 
         total_time = time.time() - start
 
-        # ── Save to Supabase ──
+        # --Save to Supabase ──
         if self.db:
             try:
                 run_id = str(uuid.uuid4())
