@@ -1,4 +1,4 @@
-version: '3.8'
+version: "3.8"
 
 services:
   api:
@@ -6,22 +6,29 @@ services:
       context: .
       dockerfile: Dockerfile.api
     ports:
-      - "8000:8000"
+      - "8001:8001"
     env_file:
       - .env
     environment:
       - PYTHONUNBUFFERED=1
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
-  # Uncomment when Next.js frontend is ready
-  # frontend:
-  #   build:
-  #     context: ./frontend
-  #     dockerfile: Dockerfile
-  #   ports:
-  #     - "3000:3000"
-  #   environment:
-  #     - NEXT_PUBLIC_API_URL=http://api:8000
-  #   depends_on:
-  #     - api
-  #   restart: unless-stopped
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://api:8001
+      - NEXT_PUBLIC_SUPABASE_URL=${SUPABASE_URL}
+      - NEXT_PUBLIC_SUPABASE_ANON_KEY=${SUPABASE_KEY}
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped

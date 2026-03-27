@@ -34,7 +34,7 @@ from src.agents.predictors.coverage_agent import CoverageAgent
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("kozi.streamlit")
 
-# ── PAGE CONFIG ─────────────────────────────────────────────────────────
+# --PAGE CONFIG ─────────────────────────────────────────────────────────
 
 st.set_page_config(
     page_title="Kozi AI - Vaccine Discovery",
@@ -43,7 +43,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# ── CUSTOM CSS ──────────────────────────────────────────────────────────
+# --CUSTOM CSS ──────────────────────────────────────────────────────────
 
 st.markdown("""
 <style>
@@ -219,7 +219,7 @@ hr {
 """, unsafe_allow_html=True)
 
 
-# ── UNIPROT FUNCTIONS (MVP-1 simplified) ────────────────────────────────
+# --UNIPROT FUNCTIONS (MVP-1 simplified) ────────────────────────────────
 
 def fetch_protein_by_id(uniprot_id: str) -> Optional[Dict]:
     """Fetch a single protein from UniProt by ID."""
@@ -340,7 +340,7 @@ def fetch_sequence(protein_id: str) -> Optional[str]:
         return None
 
 
-# ── PIPELINE RUNNER ─────────────────────────────────────────────────────
+# --PIPELINE RUNNER ─────────────────────────────────────────────────────
 
 def run_pipeline_on_candidate(candidate: CandidateProtein, progress_callback=None) -> CandidateProtein:
     """Run MVP-2 pipeline (N3→N4→N6→N7) on a single candidate."""
@@ -379,7 +379,7 @@ def run_pipeline_on_candidate(candidate: CandidateProtein, progress_callback=Non
     return candidate
 
 
-# ── UI COMPONENTS ───────────────────────────────────────────────────────
+# --UI COMPONENTS ───────────────────────────────────────────────────────
 
 def render_header():
     st.markdown("""
@@ -562,12 +562,12 @@ def build_csv_export(candidate: CandidateProtein) -> str:
     return header + "\n" + "\n".join(rows)
 
 
-# ── MAIN APP ────────────────────────────────────────────────────────────
+# --MAIN APP ────────────────────────────────────────────────────────────
 
 def main():
     render_header()
 
-    # ── SIDEBAR ──
+    # --SIDEBAR ──
     with st.sidebar:
         st.markdown("### Discovery options")
 
@@ -611,7 +611,7 @@ def main():
         run_btn = st.button("Run discovery pipeline",
                             type="primary", use_container_width=True)
 
-    # ── MAIN CONTENT ──
+    # --MAIN CONTENT ──
     if not run_btn:
         # Welcome screen
         st.markdown("---")
@@ -645,7 +645,7 @@ def main():
             "Kozi AI - umukozi means 'worker' in Kinyarwanda. We build agents that work so scientists can discover.")
         return
 
-    # ── RUN PIPELINE ──
+    # --RUN PIPELINE ──
     st.markdown("---")
 
     # Step 1: Get protein(s) based on input mode

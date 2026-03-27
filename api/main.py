@@ -48,8 +48,8 @@ logger = logging.getLogger("kozi.api")
 # --APP ─────────────────────────────────────────────────────────────────
 
 app = FastAPI(
-    title="Kozi AI - Vaccine Discovery API",
-    description="Automated vaccine target discovery pipeline",
+    title="TOP_DEEP - Vaccine Discovery API",
+    description="Vaccine target discovery pipeline",
     version="2.0.0",
 )
 
