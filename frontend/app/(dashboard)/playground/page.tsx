@@ -55,7 +55,7 @@ export default function PlaygroundPage() {
     if (!inputValue.trim()) return;
     setError(null); setRunning(true); setPs(null);
     try {
-      const body: Record<string, unknown> = { input_type: inputType, input_value: inputValue.trim() };
+      const body = { input_type: inputType, input_value: inputValue.trim() } as any;
       if (inputType === "pathogen") body.max_proteins = maxProteins;
       if (inputType === "sequence" && proteinName) body.protein_name = proteinName;
       const r = await api.startRun(body as Parameters<typeof api.startRun>[0]);
