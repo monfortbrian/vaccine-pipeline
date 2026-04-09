@@ -52,6 +52,9 @@ app = FastAPI(
     description="Vaccine target discovery pipeline",
     version="2.0.0",
 )
+@app.get("/")
+def root():
+    return {"message": "Welcome to the Kozi AI Vaccine Discovery API. Visit /docs for API documentation."}
 
 app.add_middleware(
     CORSMiddleware,
