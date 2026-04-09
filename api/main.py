@@ -52,6 +52,12 @@ app = FastAPI(
     description="Vaccine target discovery pipeline",
     version="2.0.0",
 )
+
+@app.get("/api/test-db")
+def test_db():
+    from src.storage.supabase_client import db
+    return {"connected": db.test_connection()}
+
 @app.get("/")
 def root():
     return {"message": "Welcome to the Kozi AI Vaccine Discovery API. Visit /docs for API documentation."}
@@ -543,6 +549,7 @@ async def pipeline_websocket(websocket: WebSocket, run_id: str):
         logger.info(f"WebSocket disconnected for run {run_id}")
     except Exception as e:
         logger.error(f"WebSocket error: {e}")
+
 
 
 # --STARTUP
