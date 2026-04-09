@@ -1,5 +1,4 @@
-# Kozi AI API - lean dependencies (no ML models)
-# For Docker build - fast, small image (~200MB not 4GB)
+# Docker build - fast, small image (~200MB not 4GB)
 
 # API framework
 fastapi==0.115.0
