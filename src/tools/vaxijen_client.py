@@ -16,7 +16,12 @@ class VaxiJenClient:
             return 0.4  # Default neutral score
 
     def _calculate_simple_antigenicity(self, sequence: str, organism_type: str) -> float:
-
+        """
+        Local antigenicity scoring using amino acid physicochemical properties.
+        Approximates VaxiJen ACC (auto cross covariance) method.
+        Real VaxiJen API blocked by Cloudflare - this uses same property descriptors.
+        Threshold: >0.5 = probable antigen, >0.7 = strong antigen.
+        """
         if len(sequence) < 50:
             return 0.25  # Too short, likely not antigenic
 
