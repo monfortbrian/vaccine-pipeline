@@ -148,14 +148,17 @@ class SafetyFilterAgent:
         elif homology > 50:
             flags.append(f"moderate_human_similarity_{homology:.0f}pct")
 
-        # Determine verdict
-        if not flags:
-            return "pass", []
-        elif any("toxic" in f for f in flags) or \
-                ("allertop_allergen" in flags and "allergenfp_allergen" in flags):
+     # Determine verdict
+        # Inconclusive results (from short peptides) are informational, not flags
+        real_flags = [f for f in flags if "inconclusive" not in f]
+
+        if not real_flags:
+            return "pass", flags  # Pass but keep inconclusive notes for audit
+        elif any("toxic" in f for f in real_flags) or \
+                ("allertop_allergen" in real_flags and "allergenfp_allergen" in real_flags):
             return "fail", flags
         else:
-            return "flagged", flags
+            return "flagged", real_flags
 
     def _check_allertop(self, sequence: str) -> str:
         if len(sequence) < 8:
