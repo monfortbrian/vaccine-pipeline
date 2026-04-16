@@ -65,7 +65,7 @@ def root():
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000", "http://localhost:3001",
-                   "https://kozi-ai.com", "https://playground-kozi-ai.netlify.app"],
+                   "https://kozi-ai.com", "https://playground-kozi-ai.netlify.app", "https://playground-kozi-ai-old.netlify.app", "https://playground.kozi-ai.com"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
