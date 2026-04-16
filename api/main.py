@@ -188,7 +188,8 @@ def search_pathogen_proteins(pathogen_name: str, max_results: int = 5) -> List[D
                 "membrane", "secreted", "cell surface", "extracellular", "outer membrane", "cell wall"])
             proteins.append({
                 "protein_id": accession, "protein_name": protein_name,
-                "is_surface": is_surface, "location": location.strip()
+                "is_surface": is_surface, "location": location.strip(),
+                "length": entry.get("sequence", {}).get("length", 0),
             })
         proteins.sort(key=lambda x: (not x["is_surface"],))
         return proteins[:max_results]
@@ -213,11 +214,43 @@ def fetch_sequence(protein_id: str) -> Optional[str]:
 def run_pipeline_sync(run_id: str, candidates: List[CandidateProtein], run_safety: bool, run_coverage: bool):
     """Run the full pipeline synchronously (called in background thread)."""
     run = active_runs[run_id]
-    run["status"] = "running"
+   run["status"] = "running"
     run["started_at"] = datetime.now().isoformat()
     start = time.time()
 
     try:
+        # N2: Antigen screening (VaxiJen + Phobius)
+        run["current_node"] = "N2"
+        run["message"] = "Screening antigens (VaxiJen, Phobius)..."
+        run["progress"] = 0.05
+        n2_start = time.time()
+        try:
+            from src.tools.vaxijen_client import vaxijen
+            from src.tools.phobius_client import phobius
+            for c in candidates:
+                # VaxiJen antigenicity
+                c.vaxijen_score = vaxijen.predict_antigenicity(c.sequence, "bacteria")
+                # Phobius transmembrane prediction
+                phobius_result = phobius.predict_transmembrane(c.sequence, c.protein_id)
+                c.tmhmm_helices = phobius_result.get("num_tm_helices", 0)
+                if phobius_result.get("has_signal_peptide"):
+                    c.psortb_localization = "secreted"
+                elif phobius_result.get("num_tm_helices", 0) == 0:
+                    c.psortb_localization = "cytoplasmic"
+                elif phobius_result.get("num_tm_helices", 0) == 1:
+                    c.psortb_localization = "single_pass_membrane"
+                else:
+                    c.psortb_localization = "multi_pass_membrane"
+                c.add_decision(
+                    stage="antigen_screening",
+                    decision="screened",
+                    reasoning=f"VaxiJen={c.vaxijen_score:.2f}, TM_helices={c.tmhmm_helices}, localization={c.psortb_localization}",
+                )
+                logger.info(f"N2: {c.protein_name} — VaxiJen={c.vaxijen_score:.2f}, TM={c.tmhmm_helices}, loc={c.psortb_localization}")
+        except Exception as e:
+            logger.warning(f"N2 screening failed (continuing): {e}")
+        n2_time = time.time() - n2_start
+
         # N3: T-cell
         run["current_node"] = "N3"
         run["message"] = "Predicting T-cell epitopes..."
@@ -289,6 +322,7 @@ def run_pipeline_sync(run_id: str, candidates: List[CandidateProtein], run_safet
         run["completed_at"] = datetime.now().isoformat()
         run["timing"] = {
             "total_seconds": round(total_time, 1),
+            "n2_screening": round(n2_time, 1),
             "n3_tcell": round(n3_time, 1),
             "n4_bcell": round(n4_time, 1),
             "n6_safety": round(n6_time, 1),
