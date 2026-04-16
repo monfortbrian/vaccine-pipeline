@@ -214,7 +214,7 @@ def fetch_sequence(protein_id: str) -> Optional[str]:
 def run_pipeline_sync(run_id: str, candidates: List[CandidateProtein], run_safety: bool, run_coverage: bool):
     """Run the full pipeline synchronously (called in background thread)."""
     run = active_runs[run_id]
-   run["status"] = "running"
+    run["status"] = "running"
     run["started_at"] = datetime.now().isoformat()
     start = time.time()
 
