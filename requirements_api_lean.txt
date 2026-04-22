@@ -24,3 +24,6 @@ supabase>=2.7.0
 
 # Utils
 python-dotenv>=1.0.0
+
+#JWT handling
+PyJWT>=2.0.0
