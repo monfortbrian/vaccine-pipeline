@@ -34,7 +34,7 @@ from typing import List, Dict, Any, Optional
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, BackgroundTasks, WebSocket, WebSocketDisconnect, Header
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -53,14 +53,17 @@ app = FastAPI(
     version="2.0.0",
 )
 
+
 @app.get("/api/test-db")
 def test_db():
     from src.storage.supabase_client import db
     return {"connected": db.test_connection()}
 
+
 @app.get("/")
 def root():
     return {"message": "Welcome to the Kozi AI Vaccine Discovery API. Visit /docs for API documentation."}
+
 
 app.add_middleware(
     CORSMiddleware,
@@ -78,7 +81,21 @@ executor = ThreadPoolExecutor(max_workers=2)
 active_runs: Dict[str, Dict] = {}
 
 
+def get_user_id_from_token(authorization: str = Header(None)) -> Optional[str]:
+    """Extract user_id from Supabase JWT token."""
+    if not authorization or not authorization.startswith("Bearer "):
+        return None
+    try:
+        import jwt
+        token = authorization.split(" ")[1]
+        # Decode without verification (Supabase already verified it)
+        payload = jwt.decode(token, options={"verify_signature": False})
+        return payload.get("sub")
+    except Exception:
+        return None
+
 # --REQUEST/RESPONSE MODELS ────────────────────────────────────────────
+
 
 class PipelineRequest(BaseModel):
     """Request to start a pipeline run."""
@@ -229,9 +246,11 @@ def run_pipeline_sync(run_id: str, candidates: List[CandidateProtein], run_safet
             from src.tools.phobius_client import phobius
             for c in candidates:
                 # VaxiJen antigenicity
-                c.vaxijen_score = vaxijen.predict_antigenicity(c.sequence, "bacteria")
+                c.vaxijen_score = vaxijen.predict_antigenicity(
+                    c.sequence, "bacteria")
                 # Phobius transmembrane prediction
-                phobius_result = phobius.predict_transmembrane(c.sequence, c.protein_id)
+                phobius_result = phobius.predict_transmembrane(
+                    c.sequence, c.protein_id)
                 c.tmhmm_helices = phobius_result.get("num_tm_helices", 0)
                 if phobius_result.get("has_signal_peptide"):
                     c.psortb_localization = "secreted"
@@ -246,7 +265,8 @@ def run_pipeline_sync(run_id: str, candidates: List[CandidateProtein], run_safet
                     decision="screened",
                     reasoning=f"VaxiJen={c.vaxijen_score:.2f}, TM_helices={c.tmhmm_helices}, localization={c.psortb_localization}",
                 )
-                logger.info(f"N2: {c.protein_name} — VaxiJen={c.vaxijen_score:.2f}, TM={c.tmhmm_helices}, loc={c.psortb_localization}")
+                logger.info(
+                    f"N2: {c.protein_name} — VaxiJen={c.vaxijen_score:.2f}, TM={c.tmhmm_helices}, loc={c.psortb_localization}")
         except Exception as e:
             logger.warning(f"N2 screening failed (continuing): {e}")
         n2_time = time.time() - n2_start
@@ -306,8 +326,19 @@ def run_pipeline_sync(run_id: str, candidates: List[CandidateProtein], run_safet
             )
             db.create_run(pipeline_run)
             db.update_run_stage(run_id, "completed", "completed")
+            # Set user_id on the run
+            user_id = run.get("user_id")
+            if user_id:
+                db.client.table("runs").update(
+                    {"user_id": user_id}).eq("id", run_id).execute()
             for candidate in candidates:
                 db.save_candidate(run_id, candidate)
+              # Tag data with user_id for isolation
+            user_id = run.get("user_id")
+            if user_id:
+                db.client.table("runs").update({"user_id": user_id}).eq("id", run_id).execute()
+                db.client.table("candidates").update({"user_id": user_id}).eq("run_id", run_id).execute()
+                db.client.table("epitopes").update({"user_id": user_id}).eq("run_id", run_id).execute()
             logger.info(f"Saved to Supabase: run {run_id}")
         except Exception as e:
             logger.warning(f"Supabase save failed: {e}")
@@ -393,9 +424,19 @@ async def health():
 
 
 @app.post("/api/pipeline/run", response_model=PipelineStatus)
-async def start_pipeline(req: PipelineRequest, background_tasks: BackgroundTasks):
+async def start_pipeline(req: PipelineRequest, background_tasks: BackgroundTasks, authorization: str = Header(None)):
     """Start a new pipeline run. Returns immediately with run_id for polling."""
     run_id = str(uuid.uuid4())
+    # Extract user_id from JWT
+    user_id = None
+    if authorization and authorization.startswith("Bearer "):
+        try:
+            import jwt
+            token = authorization.split(" ")[1]
+            payload = jwt.decode(token, options={"verify_signature": False})
+            user_id = payload.get("sub")
+        except Exception:
+            pass
 
     # Build candidate list based on input type
     candidates = []
@@ -456,6 +497,7 @@ async def start_pipeline(req: PipelineRequest, background_tasks: BackgroundTasks
     # Register run
     active_runs[run_id] = {
         "run_id": run_id,
+        "user_id": user_id,
         "status": "pending",
         "current_node": None,
         "progress": 0.0,
@@ -527,6 +569,17 @@ async def list_runs():
     """List all runs (most recent first)."""
     runs = []
     for run_id, run in active_runs.items():
+        # Get coverage from completed candidates
+        global_coverage = None
+        if run.get("candidates"):
+            coverages = [
+                round((c.hla_coverage_global or 0) * 100, 1)
+                for c in run["candidates"]
+                if hasattr(c, 'hla_coverage_global') and c.hla_coverage_global
+            ]
+            if coverages:
+                global_coverage = max(coverages)
+
         runs.append({
             "run_id": run_id,
             "status": run["status"],
@@ -536,7 +589,37 @@ async def list_runs():
             "progress": run.get("progress", 0),
             "started_at": run.get("started_at"),
             "completed_at": run.get("completed_at"),
+            "global_coverage_pct": global_coverage,
         })
+        # Also fetch completed runs from Supabase
+    try:
+        from src.storage.supabase_client import db
+        db_runs = db.client.table("runs").select(
+            "*").order("created_at", desc=True).limit(50).execute()
+        existing_ids = {r["run_id"] for r in runs}
+        for db_run in db_runs.data or []:
+            if db_run["id"] not in existing_ids:
+                # Get coverage from candidates
+                cands = db.client.table("candidates").select(
+                    "hla_coverage_global").eq("run_id", db_run["id"]).execute()
+                cov = None
+                if cands.data:
+                    covs = [round((c["hla_coverage_global"] or 0) * 100, 1)
+                            for c in cands.data if c.get("hla_coverage_global")]
+                    cov = max(covs) if covs else None
+                runs.append({
+                    "run_id": db_run["id"],
+                    "status": db_run.get("status", "unknown"),
+                    "input_type": db_run.get("input_type"),
+                    "input_value": db_run.get("pathogen_name"),
+                    "protein_count": None,
+                    "progress": 1.0 if db_run.get("status") == "completed" else 0,
+                    "started_at": db_run.get("created_at"),
+                    "completed_at": db_run.get("completed_at"),
+                    "global_coverage_pct": cov,
+                })
+    except Exception as e:
+        logger.warning(f"Failed to fetch runs from Supabase: {e}")
     return sorted(runs, key=lambda x: x.get("started_at") or "", reverse=True)
 
 
@@ -583,7 +666,6 @@ async def pipeline_websocket(websocket: WebSocket, run_id: str):
         logger.info(f"WebSocket disconnected for run {run_id}")
     except Exception as e:
         logger.error(f"WebSocket error: {e}")
-
 
 
 # --STARTUP
