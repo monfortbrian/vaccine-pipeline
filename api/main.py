@@ -263,7 +263,7 @@ def run_pipeline_sync(
                     reasoning=f"VaxiJen={c.vaxijen_score:.2f}, TM_helices={c.tmhmm_helices}, localization={c.psortb_localization}",
                 )
                 logger.info(
-                    f"N2: {c.protein_name} — VaxiJen={c.vaxijen_score:.2f}, "
+                    f"N2: {c.protein_name} - VaxiJen={c.vaxijen_score:.2f}, "
                     f"TM={c.tmhmm_helices}, loc={c.psortb_localization}"
                 )
         except Exception as e:

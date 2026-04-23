@@ -1,142 +1,60 @@
 import os
 import time
 import logging
-import requests
 from typing import Optional
 from dataclasses import dataclass
 
 from fastapi import Depends, HTTPException, Header, status
-from jose import jwt
-from jose.exceptions import JWTError, ExpiredSignatureError
+from jose import jwt, JWTError, ExpiredSignatureError
 
 logger = logging.getLogger("kozi.auth")
 
 # ─── Config ───────────────────────────────────────────────────────────────────
-SUPABASE_URL = os.getenv("SUPABASE_URL", "").rstrip("/")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")  # anon or service_role — used as apikey header
+SUPABASE_JWT_SECRET = os.getenv("SUPABASE_JWT_SECRET", "")
 
-if not SUPABASE_URL:
-    logger.warning("SUPABASE_URL is not set, JWT verification will fail")
+if not SUPABASE_JWT_SECRET:
+    logger.warning(
+        "SUPABASE_JWT_SECRET is not set, all protected endpoints will return 401. "
+        "Add it in Railway: Settings → Variables → SUPABASE_JWT_SECRET"
+    )
 
-JWKS_URL = f"{SUPABASE_URL}/auth/v1/keys"
-
-# Custom session timeout must match INACTIVITY_LIMIT_MS in auth-provider.tsx
+# Custom inactivity session cap, must match INACTIVITY_LIMIT_MS in auth-provider.tsx
 MAX_SESSION_AGE = 3600  # 1 hour (seconds)
-
-# Cache JWKS in memory, re-fetch if key ID not found (key rotation)
-_jwks_cache: Optional[dict] = None
 
 
 # ─── Models ───────────────────────────────────────────────────────────────────
 @dataclass
 class UserClaims:
-    sub: str                    # Supabase user UUID
+    sub: str                     # Supabase user UUID
     email: Optional[str] = None
-    role: Optional[str] = None  # "authenticated"
+    role: Optional[str] = None   # "authenticated"
     aal:  Optional[str] = None
 
 
-# ─── JWKS fetch ───────────────────────────────────────────────────────────────
-def _get_jwks(force_refresh: bool = False) -> dict:
-    """
-    Fetch Supabase JWKS with the apikey header.
-    Supabase requires the anon/service key even for the public JWKS endpoint.
-    """
-    global _jwks_cache
-    if _jwks_cache and not force_refresh:
-        return _jwks_cache
-    try:
-        res = requests.get(
-            JWKS_URL,
-            headers={
-                "apikey": SUPABASE_KEY,          # ← required by Supabase
-                "Authorization": f"Bearer {SUPABASE_KEY}",
-            },
-            timeout=10,
-        )
-        res.raise_for_status()
-        _jwks_cache = res.json()
-        logger.info("JWKS fetched successfully")
-        return _jwks_cache
-    except Exception as e:
-        logger.error(f"Failed to fetch JWKS from {JWKS_URL}: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Auth service unavailable — cannot fetch JWT keys",
-        )
-
-
-# ─── Token verification ───────────────────────────────────────────────────────
+# ─── Core verification ────────────────────────────────────────────────────────
 def _verify_token(token: str) -> UserClaims:
-    try:
-        # Get the key ID from the token header (unverified, just reading kid)
-        headers = jwt.get_unverified_header(token)
-        kid = headers.get("kid")
-
-        jwks = _get_jwks()
-
-        # Find the matching key
-        key = next(
-            (k for k in jwks.get("keys", []) if k.get("kid") == kid),
-            None,
+    if not SUPABASE_JWT_SECRET:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Server misconfiguration: SUPABASE_JWT_SECRET not set",
         )
 
-        # If key not found, the key may have rotated - force refresh once
-        if key is None:
-            logger.info(f"Key {kid} not in cache, refreshing JWKS...")
-            jwks = _get_jwks(force_refresh=True)
-            key = next(
-                (k for k in jwks.get("keys", []) if k.get("kid") == kid),
-                None,
-            )
-
-        if key is None:
-            logger.warning(f"JWT key ID {kid} not found in JWKS")
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid token: signing key not found",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-
-        # Decode and verify, Supabase ECC tokens don't always include audience
+    try:
         payload = jwt.decode(
             token,
-            key,
-            algorithms=["ES256"],
+            SUPABASE_JWT_SECRET,
+            algorithms=["HS256"],
             options={
                 "require": ["sub", "exp", "iat"],
-                "verify_aud": False,    # Supabase ECC tokens omit audience claim
+                "verify_aud": False,
             },
         )
-
-        # Custom session timeout check via iat (issued-at)
-        iat = payload.get("iat")
-        if iat:
-            age = time.time() - iat
-            if age > MAX_SESSION_AGE:
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Session expired — please log in again",
-                    headers={"WWW-Authenticate": "Bearer"},
-                )
-
-        return UserClaims(
-            sub=payload["sub"],
-            email=payload.get("email"),
-            role=payload.get("role"),
-            aal=payload.get("aal"),
-        )
-
-    except HTTPException:
-        raise  # re-raise our own HTTPExceptions unchanged
-
     except ExpiredSignatureError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Session expired — please log in again",
+            detail="Session expired, please log in again",
             headers={"WWW-Authenticate": "Bearer"},
         )
-
     except JWTError as e:
         logger.warning(f"JWT verification failed: {e}")
         raise HTTPException(
@@ -144,6 +62,24 @@ def _verify_token(token: str) -> UserClaims:
             detail="Invalid or malformed token",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+    # Custom session age check via iat (issued-at timestamp)
+    iat = payload.get("iat")
+    if iat:
+        age = time.time() - iat
+        if age > MAX_SESSION_AGE:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Session expired, please log in again",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+    return UserClaims(
+        sub=payload["sub"],
+        email=payload.get("email"),
+        role=payload.get("role"),
+        aal=payload.get("aal"),
+    )
 
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -160,7 +96,7 @@ def _extract_bearer(authorization: Optional[str]) -> Optional[str]:
 async def require_user(
     authorization: Optional[str] = Header(None),
 ) -> UserClaims:
-    """Protected endpoint — returns 401 if token missing or invalid."""
+    """Protected endpoint, returns 401 if token missing or invalid."""
     token = _extract_bearer(authorization)
     if not token:
         raise HTTPException(
@@ -174,7 +110,7 @@ async def require_user(
 async def optional_user(
     authorization: Optional[str] = Header(None),
 ) -> Optional[UserClaims]:
-    """Optional auth returns None if no/bad token, never raises."""
+    """Optional auth, returns None if no/bad token, never raises."""
     token = _extract_bearer(authorization)
     if not token:
         return None
