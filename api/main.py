@@ -2,12 +2,12 @@
 Wraps the vaccine discovery pipeline as a REST API.
 
 Endpoints:
-  POST /api/pipeline/run          - Start a pipeline run (async)
-  GET  /api/pipeline/status/{id}  - Get run status and progress
-  GET  /api/pipeline/results/{id} - Get completed results
-  GET  /api/runs                  - List all runs
-  GET  /api/health                - Health check
-  WS   /ws/pipeline/{id}          - Real-time progress via WebSocket
+  POST /api/pipeline/run          - Start a pipeline run (requires auth)
+  GET  /api/pipeline/status/{id}  - Get run status and progress (requires auth)
+  GET  /api/pipeline/results/{id} - Get completed results (requires auth)
+  GET  /api/runs                  - List runs for authenticated user (requires auth)
+  GET  /api/health                - Health check (public)
+  WS   /ws/pipeline/{id}          - Real-time progress via WebSocket (requires token query param)
 
 Run:
   uvicorn api.main:app --reload --port 8000
@@ -34,18 +34,20 @@ from typing import List, Dict, Any, Optional
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks, WebSocket, WebSocketDisconnect, Header
+from fastapi import FastAPI, HTTPException, BackgroundTasks, WebSocket, WebSocketDisconnect, Header, Depends, Query, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# Auth dependency - drop auth.py into your api/ folder
+from api.auth import require_user, optional_user, UserClaims
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("kozi.api")
 
-# --APP ─────────────────────────────────────────────────────────────────
+# --APP
 
 app = FastAPI(
     title="TOP_DEEP - Vaccine Discovery API",
@@ -67,8 +69,14 @@ def root():
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:3001",
-                   "https://kozi-ai.com", "https://playground-kozi-ai.netlify.app", "https://playground-kozi-ai-old.netlify.app", "https://playground.kozi-ai.com"],
+    allow_origins=[
+        "http://localhost:3000",
+        "http://localhost:3001",
+        "https://kozi-ai.com",
+        "https://playground-kozi-ai.netlify.app",
+        "https://playground-kozi-ai-old.netlify.app",
+        "https://playground.kozi-ai.com",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -81,20 +89,7 @@ executor = ThreadPoolExecutor(max_workers=2)
 active_runs: Dict[str, Dict] = {}
 
 
-def get_user_id_from_token(authorization: str = Header(None)) -> Optional[str]:
-    """Extract user_id from Supabase JWT token."""
-    if not authorization or not authorization.startswith("Bearer "):
-        return None
-    try:
-        import jwt
-        token = authorization.split(" ")[1]
-        # Decode without verification (Supabase already verified it)
-        payload = jwt.decode(token, options={"verify_signature": False})
-        return payload.get("sub")
-    except Exception:
-        return None
-
-# --REQUEST/RESPONSE MODELS ────────────────────────────────────────────
+# --REQUEST/RESPONSE MODELS
 
 
 class PipelineRequest(BaseModel):
@@ -155,8 +150,7 @@ class PipelineResult(BaseModel):
     candidates: List[CandidateResponse]
 
 
-# --HELPER: FETCH FROM UNIPROT ──────────────────────────────────────────
-
+# --HELPER: FETCH FROM UNIPROT
 
 def fetch_protein_by_id(uniprot_id: str) -> Optional[Dict]:
     try:
@@ -192,20 +186,22 @@ def search_pathogen_proteins(pathogen_name: str, max_results: int = 5) -> List[D
         proteins = []
         for entry in resp.json().get("results", []):
             accession = entry.get("primaryAccession", "")
-            name_obj = entry.get("proteinDescription", {}
-                                 ).get("recommendedName", {})
+            name_obj = entry.get("proteinDescription", {}).get("recommendedName", {})
             protein_name = name_obj.get("fullName", {}).get("value", "Unknown")
             location = ""
             for comment in entry.get("comments", []):
                 if comment.get("commentType") == "SUBCELLULAR LOCATION":
                     for loc in comment.get("subcellularLocations", []):
-                        location += loc.get("location", {}
-                                            ).get("value", "") + " "
+                        location += loc.get("location", {}).get("value", "") + " "
             is_surface = any(kw in location.lower() for kw in [
-                "membrane", "secreted", "cell surface", "extracellular", "outer membrane", "cell wall"])
+                "membrane", "secreted", "cell surface", "extracellular",
+                "outer membrane", "cell wall",
+            ])
             proteins.append({
-                "protein_id": accession, "protein_name": protein_name,
-                "is_surface": is_surface, "location": location.strip(),
+                "protein_id": accession,
+                "protein_name": protein_name,
+                "is_surface": is_surface,
+                "location": location.strip(),
                 "length": entry.get("sequence", {}).get("length", 0),
             })
         proteins.sort(key=lambda x: (not x["is_surface"],))
@@ -226,9 +222,14 @@ def fetch_sequence(protein_id: str) -> Optional[str]:
         return None
 
 
-# --PIPELINE EXECUTION ──────────────────────────────────────────────────
+# --PIPELINE EXECUTION
 
-def run_pipeline_sync(run_id: str, candidates: List[CandidateProtein], run_safety: bool, run_coverage: bool):
+def run_pipeline_sync(
+    run_id: str,
+    candidates: List[CandidateProtein],
+    run_safety: bool,
+    run_coverage: bool,
+):
     """Run the full pipeline synchronously (called in background thread)."""
     run = active_runs[run_id]
     run["status"] = "running"
@@ -245,12 +246,8 @@ def run_pipeline_sync(run_id: str, candidates: List[CandidateProtein], run_safet
             from src.tools.vaxijen_client import vaxijen
             from src.tools.phobius_client import phobius
             for c in candidates:
-                # VaxiJen antigenicity
-                c.vaxijen_score = vaxijen.predict_antigenicity(
-                    c.sequence, "bacteria")
-                # Phobius transmembrane prediction
-                phobius_result = phobius.predict_transmembrane(
-                    c.sequence, c.protein_id)
+                c.vaxijen_score = vaxijen.predict_antigenicity(c.sequence, "bacteria")
+                phobius_result = phobius.predict_transmembrane(c.sequence, c.protein_id)
                 c.tmhmm_helices = phobius_result.get("num_tm_helices", 0)
                 if phobius_result.get("has_signal_peptide"):
                     c.psortb_localization = "secreted"
@@ -266,7 +263,9 @@ def run_pipeline_sync(run_id: str, candidates: List[CandidateProtein], run_safet
                     reasoning=f"VaxiJen={c.vaxijen_score:.2f}, TM_helices={c.tmhmm_helices}, localization={c.psortb_localization}",
                 )
                 logger.info(
-                    f"N2: {c.protein_name} — VaxiJen={c.vaxijen_score:.2f}, TM={c.tmhmm_helices}, loc={c.psortb_localization}")
+                    f"N2: {c.protein_name} — VaxiJen={c.vaxijen_score:.2f}, "
+                    f"TM={c.tmhmm_helices}, loc={c.psortb_localization}"
+                )
         except Exception as e:
             logger.warning(f"N2 screening failed (continuing): {e}")
         n2_time = time.time() - n2_start
@@ -316,6 +315,9 @@ def run_pipeline_sync(run_id: str, candidates: List[CandidateProtein], run_safet
         try:
             from src.storage.supabase_client import db
             from src.models.candidate import PipelineRun as PipelineRunModel
+
+            user_id = run.get("user_id")  # comes from JWT in start_pipeline
+
             pipeline_run = PipelineRunModel(
                 run_id=run_id,
                 pathogen_name=candidates[0].protein_name if candidates else "unknown",
@@ -324,28 +326,22 @@ def run_pipeline_sync(run_id: str, candidates: List[CandidateProtein], run_safet
                 current_stage="completed",
                 status="completed",
             )
-            db.create_run(pipeline_run)
+
+            # Pass user_id into create_run so it's set from the start
+            db.create_run(pipeline_run, user_id=user_id)
             db.update_run_stage(run_id, "completed", "completed")
-            # Set user_id on the run
-            user_id = run.get("user_id")
-            if user_id:
-                db.client.table("runs").update(
-                    {"user_id": user_id}).eq("id", run_id).execute()
+
+            # Save each candidate + its epitopes, all tagged with user_id
             for candidate in candidates:
-                db.save_candidate(run_id, candidate)
-              # Tag data with user_id for isolation
-            user_id = run.get("user_id")
-            if user_id:
-                db.client.table("runs").update({"user_id": user_id}).eq("id", run_id).execute()
-                db.client.table("candidates").update({"user_id": user_id}).eq("run_id", run_id).execute()
-                db.client.table("epitopes").update({"user_id": user_id}).eq("run_id", run_id).execute()
-            logger.info(f"Saved to Supabase: run {run_id}")
+                db.save_candidate(run_id, candidate, user_id=user_id)
+
+            logger.info(f"Saved to Supabase: run {run_id} (user={user_id})")
+
         except Exception as e:
             logger.warning(f"Supabase save failed: {e}")
 
         total_time = time.time() - start
 
-        # Build results
         run["status"] = "completed"
         run["progress"] = 1.0
         run["current_node"] = None
@@ -393,7 +389,6 @@ def candidate_to_response(c: CandidateProtein) -> CandidateResponse:
             allergenicity_safe=ep.allergenicity_safe, toxicity_safe=ep.toxicity_safe,
         ))
 
-    # Extract coverage detail from decisions
     coverage_detail = None
     for d in c.decisions:
         if d.get("stage") == "coverage_analysis" and "per_population" in d:
@@ -404,8 +399,7 @@ def candidate_to_response(c: CandidateProtein) -> CandidateResponse:
         protein_name=c.protein_name,
         sequence_length=len(c.sequence),
         ctl_count=len(c.ctl_epitopes),
-        ctl_strong=len(
-            [e for e in c.ctl_epitopes if e.confidence_tier == ConfidenceTier.HIGH]),
+        ctl_strong=len([e for e in c.ctl_epitopes if e.confidence_tier == ConfidenceTier.HIGH]),
         htl_count=len(c.htl_epitopes),
         bcell_count=len(c.bcell_epitopes),
         global_coverage_pct=round((c.hla_coverage_global or 0) * 100, 1),
@@ -416,29 +410,24 @@ def candidate_to_response(c: CandidateProtein) -> CandidateResponse:
     )
 
 
-# --API ENDPOINTS ───────────────────────────────────────────────────────
+# --API ENDPOINTS
 
 @app.get("/api/health")
 async def health():
+    """Public - no auth required."""
     return {"status": "ok", "service": "kozi-pipeline", "version": "2.0.0"}
 
 
 @app.post("/api/pipeline/run", response_model=PipelineStatus)
-async def start_pipeline(req: PipelineRequest, background_tasks: BackgroundTasks, authorization: str = Header(None)):
+async def start_pipeline(
+    req: PipelineRequest,
+    background_tasks: BackgroundTasks,
+    user: UserClaims = Depends(require_user),   # 401 if token missing/expired
+):
     """Start a new pipeline run. Returns immediately with run_id for polling."""
     run_id = str(uuid.uuid4())
-    # Extract user_id from JWT
-    user_id = None
-    if authorization and authorization.startswith("Bearer "):
-        try:
-            import jwt
-            token = authorization.split(" ")[1]
-            payload = jwt.decode(token, options={"verify_signature": False})
-            user_id = payload.get("sub")
-        except Exception:
-            pass
+    user_id = user.sub  # verified Supabase UUID
 
-    # Build candidate list based on input type
     candidates = []
 
     if req.input_type == "uniprot_id":
@@ -470,8 +459,7 @@ async def start_pipeline(req: PipelineRequest, background_tasks: BackgroundTasks
         ))
 
     elif req.input_type == "pathogen":
-        proteins = search_pathogen_proteins(
-            req.input_value, max_results=req.max_proteins)
+        proteins = search_pathogen_proteins(req.input_value, max_results=req.max_proteins)
         if not proteins:
             raise HTTPException(
                 status_code=404, detail=f"No proteins found for '{req.input_value}'")
@@ -494,10 +482,9 @@ async def start_pipeline(req: PipelineRequest, background_tasks: BackgroundTasks
         raise HTTPException(
             status_code=400, detail="No valid proteins to analyze")
 
-    # Register run
     active_runs[run_id] = {
         "run_id": run_id,
-        "user_id": user_id,
+        "user_id": user_id,          # scoped to authenticated user
         "status": "pending",
         "current_node": None,
         "progress": 0.0,
@@ -511,9 +498,7 @@ async def start_pipeline(req: PipelineRequest, background_tasks: BackgroundTasks
         "timing": None,
     }
 
-    # Run pipeline in background thread
-    executor.submit(run_pipeline_sync, run_id, candidates,
-                    req.run_safety, req.run_coverage)
+    executor.submit(run_pipeline_sync, run_id, candidates, req.run_safety, req.run_coverage)
 
     return PipelineStatus(
         run_id=run_id,
@@ -524,11 +509,18 @@ async def start_pipeline(req: PipelineRequest, background_tasks: BackgroundTasks
 
 
 @app.get("/api/pipeline/status/{run_id}", response_model=PipelineStatus)
-async def get_pipeline_status(run_id: str):
-    """Poll for pipeline progress."""
+async def get_pipeline_status(
+    run_id: str,
+    user: UserClaims = Depends(require_user),   # users can only see their own runs
+):
+    """Poll for pipeline progress. Users can only see their own runs."""
     run = active_runs.get(run_id)
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
+
+    # Ownership check - prevent users from polling other users' runs
+    if run.get("user_id") and run["user_id"] != user.sub:
+        raise HTTPException(status_code=403, detail="Access denied")
 
     return PipelineStatus(
         run_id=run["run_id"],
@@ -542,19 +534,23 @@ async def get_pipeline_status(run_id: str):
 
 
 @app.get("/api/pipeline/results/{run_id}", response_model=PipelineResult)
-async def get_pipeline_results(run_id: str):
-    """Get completed pipeline results."""
+async def get_pipeline_results(
+    run_id: str,
+    user: UserClaims = Depends(require_user),  # users can only see their own runs
+):
+    """Get completed pipeline results. Users can only see their own runs."""
     run = active_runs.get(run_id)
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
+
+    if run.get("user_id") and run["user_id"] != user.sub:
+        raise HTTPException(status_code=403, detail="Access denied")
 
     if run["status"] != "completed":
         raise HTTPException(
             status_code=409, detail=f"Run is {run['status']}, not completed")
 
-    candidates_response = []
-    for c in run.get("candidates", []):
-        candidates_response.append(candidate_to_response(c))
+    candidates_response = [candidate_to_response(c) for c in run.get("candidates", [])]
 
     return PipelineResult(
         run_id=run_id,
@@ -565,17 +561,21 @@ async def get_pipeline_results(run_id: str):
 
 
 @app.get("/api/runs")
-async def list_runs():
-    """List all runs (most recent first)."""
+async def list_runs(user: UserClaims = Depends(require_user)):  # 🔒
+    """List runs for the authenticated user only."""
     runs = []
+
+    # In-memory runs scoped to this user
     for run_id, run in active_runs.items():
-        # Get coverage from completed candidates
+        if run.get("user_id") != user.sub:
+            continue
+
         global_coverage = None
         if run.get("candidates"):
             coverages = [
                 round((c.hla_coverage_global or 0) * 100, 1)
                 for c in run["candidates"]
-                if hasattr(c, 'hla_coverage_global') and c.hla_coverage_global
+                if hasattr(c, "hla_coverage_global") and c.hla_coverage_global
             ]
             if coverages:
                 global_coverage = max(coverages)
@@ -591,21 +591,33 @@ async def list_runs():
             "completed_at": run.get("completed_at"),
             "global_coverage_pct": global_coverage,
         })
-        # Also fetch completed runs from Supabase
+
+    # Also fetch completed runs from Supabase already scoped via user_id column
     try:
         from src.storage.supabase_client import db
-        db_runs = db.client.table("runs").select(
-            "*").order("created_at", desc=True).limit(50).execute()
+        db_runs = (
+            db.client.table("runs")
+            .select("*")
+            .eq("user_id", user.sub)          # ← RLS / app-level filter
+            .order("created_at", desc=True)
+            .limit(50)
+            .execute()
+        )
         existing_ids = {r["run_id"] for r in runs}
         for db_run in db_runs.data or []:
             if db_run["id"] not in existing_ids:
-                # Get coverage from candidates
-                cands = db.client.table("candidates").select(
-                    "hla_coverage_global").eq("run_id", db_run["id"]).execute()
+                cands = (
+                    db.client.table("candidates")
+                    .select("hla_coverage_global")
+                    .eq("run_id", db_run["id"])
+                    .execute()
+                )
                 cov = None
                 if cands.data:
-                    covs = [round((c["hla_coverage_global"] or 0) * 100, 1)
-                            for c in cands.data if c.get("hla_coverage_global")]
+                    covs = [
+                        round((c["hla_coverage_global"] or 0) * 100, 1)
+                        for c in cands.data if c.get("hla_coverage_global")
+                    ]
                     cov = max(covs) if covs else None
                 runs.append({
                     "run_id": db_run["id"],
@@ -620,15 +632,37 @@ async def list_runs():
                 })
     except Exception as e:
         logger.warning(f"Failed to fetch runs from Supabase: {e}")
+
     return sorted(runs, key=lambda x: x.get("started_at") or "", reverse=True)
 
 
-# --WEBSOCKET FOR REAL-TIME PROGRESS
-
+# --WEBSOCKET FOR REAL-TIME PROGRESS UPDATES
 @app.websocket("/ws/pipeline/{run_id}")
-async def pipeline_websocket(websocket: WebSocket, run_id: str):
-    """WebSocket for real-time pipeline progress updates."""
+async def pipeline_websocket(
+    websocket: WebSocket,
+    run_id: str,
+    token: Optional[str] = Query(None),   # ?token=<bearer>
+):
+    """
+    WebSocket for real-time pipeline progress updates.
+    Pass the Supabase access token as a query param:
+        ws://host/ws/pipeline/{run_id}?token=<access_token>
+    """
     await websocket.accept()
+
+    # Validate token (WebSockets can't send Authorization headers easily)
+    if not token:
+        await websocket.send_json({"error": "Missing token", "code": 401})
+        await websocket.close(code=4001)
+        return
+
+    try:
+        from api.auth import _verify_token
+        user = _verify_token(token)
+    except Exception:
+        await websocket.send_json({"error": "Invalid or expired token", "code": 401})
+        await websocket.close(code=4001)
+        return
 
     try:
         last_progress = -1
@@ -636,6 +670,11 @@ async def pipeline_websocket(websocket: WebSocket, run_id: str):
             run = active_runs.get(run_id)
             if not run:
                 await websocket.send_json({"error": "Run not found"})
+                break
+
+            # Ownership check
+            if run.get("user_id") and run["user_id"] != user.sub:
+                await websocket.send_json({"error": "Access denied", "code": 403})
                 break
 
             progress = run.get("progress", 0)
@@ -650,7 +689,6 @@ async def pipeline_websocket(websocket: WebSocket, run_id: str):
                 last_progress = progress
 
             if run["status"] in ("completed", "failed"):
-                # Send final update
                 await websocket.send_json({
                     "run_id": run_id,
                     "status": run["status"],
@@ -660,7 +698,7 @@ async def pipeline_websocket(websocket: WebSocket, run_id: str):
                 })
                 break
 
-            await asyncio.sleep(1)  # Poll every second
+            await asyncio.sleep(1)
 
     except WebSocketDisconnect:
         logger.info(f"WebSocket disconnected for run {run_id}")
@@ -673,5 +711,9 @@ async def pipeline_websocket(websocket: WebSocket, run_id: str):
 @app.on_event("startup")
 async def startup():
     logger.info("Kozi AI API starting...")
+    if not os.getenv("SUPABASE_JWT_SECRET"):
+        logger.warning("SUPABASE_JWT_SECRET not set, all protected endpoints will return 500")
     logger.info(
-        "Endpoints: POST /api/pipeline/run, GET /api/pipeline/status/{id}, GET /api/pipeline/results/{id}")
+        "Endpoints: POST /api/pipeline/run, GET /api/pipeline/status/{id}, "
+        "GET /api/pipeline/results/{id}, GET /api/runs"
+    )
