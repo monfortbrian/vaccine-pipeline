@@ -12,6 +12,7 @@ if os.getenv("RAILWAY_ENVIRONMENT") is None:
 
 logger = logging.getLogger(__name__)
 
+
 class SupabaseClient:
     def __init__(self):
         self.url = os.getenv("SUPABASE_URL")
@@ -22,10 +23,10 @@ class SupabaseClient:
 
         self.client: Client = create_client(self.url, self.key)
 
-    def create_run(self, run: PipelineRun) -> str:
+    def create_run(self, run: PipelineRun, user_id: Optional[str] = None) -> str:
         """Create a new pipeline run in the database."""
         try:
-            result = self.client.table("runs").insert({
+            data = {
                 "id": run.run_id,
                 "pathogen_name": run.pathogen_name,
                 "input_type": run.input_type,
@@ -37,11 +38,15 @@ class SupabaseClient:
                 "status": run.status,
                 "config": {
                     "coverage_loop_count": run.coverage_loop_count,
-                    "coverage_met": run.coverage_met
-                }
-            }).execute()
+                    "coverage_met": run.coverage_met,
+                },
+            }
+            # ── Write user_id at creation time so RLS works immediately ──
+            if user_id:
+                data["user_id"] = user_id
 
-            logger.info(f"Created run {run.run_id} for pathogen {run.pathogen_name}")
+            result = self.client.table("runs").insert(data).execute()
+            logger.info(f"Created run {run.run_id} for pathogen {run.pathogen_name} (user={user_id})")
             return run.run_id
 
         except Exception as e:
@@ -59,11 +64,18 @@ class SupabaseClient:
         self.client.table("runs").update(update_data).eq("id", run_id).execute()
         logger.info(f"Updated run {run_id} to stage {stage}")
 
-    def save_candidate(self, run_id: str, candidate: CandidateProtein) -> str:
+    def save_candidate(
+        self, run_id: str, candidate: CandidateProtein, user_id: Optional[str] = None
+    ) -> str:
         """Save or update a candidate protein."""
         try:
-            # Check if candidate exists
-            existing = self.client.table("candidates").select("id").eq("run_id", run_id).eq("protein_id", candidate.protein_id).execute()
+            existing = (
+                self.client.table("candidates")
+                .select("id")
+                .eq("run_id", run_id)
+                .eq("protein_id", candidate.protein_id)
+                .execute()
+            )
 
             candidate_data = {
                 "run_id": run_id,
@@ -85,20 +97,26 @@ class SupabaseClient:
                 "hla_coverage_global": candidate.hla_coverage_global,
                 "hla_coverage_africa": candidate.hla_coverage_africa,
                 "decisions": candidate.decisions,
-                "updated_at": datetime.now().isoformat()
+                "updated_at": datetime.now().isoformat(),
             }
+            # ── Tag candidate with user_id for isolation ──
+            if user_id:
+                candidate_data["user_id"] = user_id
 
             if existing.data:
-                # Update existing
-                result = self.client.table("candidates").update(candidate_data).eq("id", existing.data[0]["id"]).execute()
+                result = (
+                    self.client.table("candidates")
+                    .update(candidate_data)
+                    .eq("id", existing.data[0]["id"])
+                    .execute()
+                )
                 candidate_db_id = existing.data[0]["id"]
             else:
-                # Insert new
                 result = self.client.table("candidates").insert(candidate_data).execute()
                 candidate_db_id = result.data[0]["id"]
 
-            # Save epitopes
-            self._save_epitopes(candidate_db_id, run_id, candidate)
+            # Save epitopes (user_id passed through)
+            self._save_epitopes(candidate_db_id, run_id, candidate, user_id=user_id)
 
             logger.info(f"Saved candidate {candidate.protein_id}")
             return candidate_db_id
@@ -107,19 +125,25 @@ class SupabaseClient:
             logger.error(f"Failed to save candidate {candidate.protein_id}: {e}")
             raise
 
-    def _save_epitopes(self, candidate_id: str, run_id: str, candidate: CandidateProtein):
+    def _save_epitopes(
+        self,
+        candidate_id: str,
+        run_id: str,
+        candidate: CandidateProtein,
+        user_id: Optional[str] = None,
+    ):
         """Save epitopes for a candidate."""
-        # Delete existing epitopes for this candidate
         self.client.table("epitopes").delete().eq("candidate_id", candidate_id).execute()
 
-        all_epitopes = candidate.ctl_epitopes + candidate.htl_epitopes + candidate.bcell_epitopes
-
+        all_epitopes = (
+            candidate.ctl_epitopes + candidate.htl_epitopes + candidate.bcell_epitopes
+        )
         if not all_epitopes:
             return
 
         epitope_data = []
         for epitope in all_epitopes:
-            epitope_data.append({
+            row = {
                 "candidate_id": candidate_id,
                 "run_id": run_id,
                 "sequence": epitope.sequence,
@@ -131,26 +155,40 @@ class SupabaseClient:
                 "allergenicity_safe": epitope.allergenicity_safe,
                 "toxicity_safe": epitope.toxicity_safe,
                 "confidence_tier": epitope.confidence_tier.value,
-                "tool_outputs": epitope.tool_outputs
-            })
+                "tool_outputs": epitope.tool_outputs,
+            }
+            # ── Tag epitope with user_id ──
+            if user_id:
+                row["user_id"] = user_id
+            epitope_data.append(row)
 
         self.client.table("epitopes").insert(epitope_data).execute()
         logger.info(f"Saved {len(epitope_data)} epitopes for candidate {candidate_id}")
 
-    def log_decision(self, run_id: str, candidate_id: str, stage: str, decision: str, reasoning: str, input_data: Dict[str, Any] = None):
+    def log_decision(
+        self,
+        run_id: str,
+        candidate_id: str,
+        stage: str,
+        decision: str,
+        reasoning: str,
+        input_data: Dict[str, Any] = None,
+        user_id: Optional[str] = None,
+    ):
         """Log an AI decision for audit trail."""
         try:
-            self.client.table("decisions").insert({
+            row = {
                 "run_id": run_id,
                 "candidate_id": candidate_id,
                 "stage": stage,
                 "decision": decision,
                 "reasoning": reasoning,
-                "input_data": input_data or {}
-            }).execute()
-
+                "input_data": input_data or {},
+            }
+            if user_id:
+                row["user_id"] = user_id
+            self.client.table("decisions").insert(row).execute()
             logger.info(f"Logged decision: {stage} -> {decision}")
-
         except Exception as e:
             logger.error(f"Failed to log decision: {e}")
             raise
@@ -167,18 +205,24 @@ class SupabaseClient:
 
     def get_epitopes_for_candidate(self, candidate_id: str) -> List[Dict]:
         """Get all epitopes for a candidate."""
-        result = self.client.table("epitopes").select("*").eq("candidate_id", candidate_id).execute()
+        result = (
+            self.client.table("epitopes")
+            .select("*")
+            .eq("candidate_id", candidate_id)
+            .execute()
+        )
         return result.data
 
     def test_connection(self) -> bool:
         """Test database connection."""
         try:
-            result = self.client.table("runs").select("id").limit(1).execute()
+            self.client.table("runs").select("id").limit(1).execute()
             logger.info("Database connection successful")
             return True
         except Exception as e:
             logger.error(f"Database connection failed: {e}")
             return False
+
 
 # Global instance
 db = SupabaseClient()
