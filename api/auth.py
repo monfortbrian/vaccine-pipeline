@@ -11,89 +11,113 @@ from jose.exceptions import JWTError, ExpiredSignatureError
 
 logger = logging.getLogger("kozi.auth")
 
+# ─── Config ───────────────────────────────────────────────────────────────────
+SUPABASE_URL = os.getenv("SUPABASE_URL", "").rstrip("/")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")  # anon or service_role — used as apikey header
 
-# CONFIG
-SUPABASE_URL = os.getenv("SUPABASE_URL")
 if not SUPABASE_URL:
-    raise RuntimeError("SUPABASE_URL is not set")
+    logger.warning("SUPABASE_URL is not set, JWT verification will fail")
 
 JWKS_URL = f"{SUPABASE_URL}/auth/v1/keys"
 
-# YOUR CUSTOM SESSION TIMEOUT (seconds)
-MAX_SESSION_AGE = 3600  # 1 hour
+# Custom session timeout must match INACTIVITY_LIMIT_MS in auth-provider.tsx
+MAX_SESSION_AGE = 3600  # 1 hour (seconds)
 
-# Cache JWKS to avoid calling Supabase every request
-_jwks_cache = None
+# Cache JWKS in memory, re-fetch if key ID not found (key rotation)
+_jwks_cache: Optional[dict] = None
 
 
-# MODELS
+# ─── Models ───────────────────────────────────────────────────────────────────
 @dataclass
 class UserClaims:
-    sub: str
+    sub: str                    # Supabase user UUID
     email: Optional[str] = None
-    role: Optional[str] = None
-    aal: Optional[str] = None
+    role: Optional[str] = None  # "authenticated"
+    aal:  Optional[str] = None
 
 
-
-# HELPERS
-def _get_jwks():
+# ─── JWKS fetch ───────────────────────────────────────────────────────────────
+def _get_jwks(force_refresh: bool = False) -> dict:
+    """
+    Fetch Supabase JWKS with the apikey header.
+    Supabase requires the anon/service key even for the public JWKS endpoint.
+    """
     global _jwks_cache
-    if _jwks_cache is None:
-        try:
-            res = requests.get(JWKS_URL, timeout=5)
-            res.raise_for_status()
-            _jwks_cache = res.json()
-        except Exception as e:
-            logger.error(f"Failed to fetch JWKS: {e}")
-            raise HTTPException(
-                status_code=500,
-                detail="Auth service unavailable",
-            )
-    return _jwks_cache
-
-
-def _extract_bearer(authorization: Optional[str]) -> Optional[str]:
-    if not authorization:
-        return None
-    parts = authorization.split(" ", 1)
-    if len(parts) != 2 or parts[0].lower() != "bearer":
-        return None
-    return parts[1].strip()
-
-
-
-# CORE VERIFY
-def _verify_token(token: str) -> UserClaims:
+    if _jwks_cache and not force_refresh:
+        return _jwks_cache
     try:
-        jwks = _get_jwks()
-
-        headers = jwt.get_unverified_header(token)
-
-        key = next(
-            (k for k in jwks["keys"] if k["kid"] == headers["kid"]),
-            None
+        res = requests.get(
+            JWKS_URL,
+            headers={
+                "apikey": SUPABASE_KEY,          # ← required by Supabase
+                "Authorization": f"Bearer {SUPABASE_KEY}",
+            },
+            timeout=10,
+        )
+        res.raise_for_status()
+        _jwks_cache = res.json()
+        logger.info("JWKS fetched successfully")
+        return _jwks_cache
+    except Exception as e:
+        logger.error(f"Failed to fetch JWKS from {JWKS_URL}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Auth service unavailable — cannot fetch JWT keys",
         )
 
-        if not key:
-            raise HTTPException(status_code=401, detail="Invalid token key")
 
+# ─── Token verification ───────────────────────────────────────────────────────
+def _verify_token(token: str) -> UserClaims:
+    try:
+        # Get the key ID from the token header (unverified, just reading kid)
+        headers = jwt.get_unverified_header(token)
+        kid = headers.get("kid")
+
+        jwks = _get_jwks()
+
+        # Find the matching key
+        key = next(
+            (k for k in jwks.get("keys", []) if k.get("kid") == kid),
+            None,
+        )
+
+        # If key not found, the key may have rotated - force refresh once
+        if key is None:
+            logger.info(f"Key {kid} not in cache, refreshing JWKS...")
+            jwks = _get_jwks(force_refresh=True)
+            key = next(
+                (k for k in jwks.get("keys", []) if k.get("kid") == kid),
+                None,
+            )
+
+        if key is None:
+            logger.warning(f"JWT key ID {kid} not found in JWKS")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token: signing key not found",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        # Decode and verify, Supabase ECC tokens don't always include audience
         payload = jwt.decode(
             token,
             key,
             algorithms=["ES256"],
-            audience="authenticated",
-            options={"require": ["sub", "exp", "iat"]},
+            options={
+                "require": ["sub", "exp", "iat"],
+                "verify_aud": False,    # Supabase ECC tokens omit audience claim
+            },
         )
 
-        # CUSTOM SESSION CONTROL
+        # Custom session timeout check via iat (issued-at)
         iat = payload.get("iat")
         if iat:
             age = time.time() - iat
             if age > MAX_SESSION_AGE:
                 raise HTTPException(
-                    status_code=401,
-                    detail="Session expired (backend policy)",
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Session expired — please log in again",
+                    headers={"WWW-Authenticate": "Bearer"},
                 )
 
         return UserClaims(
@@ -103,32 +127,46 @@ def _verify_token(token: str) -> UserClaims:
             aal=payload.get("aal"),
         )
 
+    except HTTPException:
+        raise  # re-raise our own HTTPExceptions unchanged
+
     except ExpiredSignatureError:
         raise HTTPException(
-            status_code=401,
-            detail="Session expired",
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Session expired — please log in again",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
     except JWTError as e:
         logger.warning(f"JWT verification failed: {e}")
         raise HTTPException(
-            status_code=401,
+            status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or malformed token",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
 
-# FASTAPI DEPENDENCIES
+# ─── Helpers ──────────────────────────────────────────────────────────────────
+def _extract_bearer(authorization: Optional[str]) -> Optional[str]:
+    if not authorization:
+        return None
+    parts = authorization.split(" ", 1)
+    if len(parts) != 2 or parts[0].lower() != "bearer":
+        return None
+    return parts[1].strip() or None
 
+
+# ─── FastAPI dependencies ─────────────────────────────────────────────────────
 async def require_user(
     authorization: Optional[str] = Header(None),
 ) -> UserClaims:
+    """Protected endpoint — returns 401 if token missing or invalid."""
     token = _extract_bearer(authorization)
     if not token:
         raise HTTPException(
-            status_code=401,
+            status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Missing Authorization header",
+            headers={"WWW-Authenticate": "Bearer"},
         )
     return _verify_token(token)
 
@@ -136,6 +174,7 @@ async def require_user(
 async def optional_user(
     authorization: Optional[str] = Header(None),
 ) -> Optional[UserClaims]:
+    """Optional auth returns None if no/bad token, never raises."""
     token = _extract_bearer(authorization)
     if not token:
         return None
