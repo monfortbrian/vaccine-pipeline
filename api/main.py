@@ -567,7 +567,9 @@ async def list_runs(user: UserClaims = Depends(require_user)):  # 🔒
 
     # In-memory runs scoped to this user
     for run_id, run in active_runs.items():
-        if run.get("user_id") != user.sub:
+        # Show runs owned by this user OR runs with no owner (legacy)
+        run_user_id = run.get("user_id")
+        if run_user_id is not None and run_user_id != user.sub:
             continue
 
         global_coverage = None
@@ -598,7 +600,7 @@ async def list_runs(user: UserClaims = Depends(require_user)):  # 🔒
         db_runs = (
             db.client.table("runs")
             .select("*")
-            .eq("user_id", user.sub)          # ← RLS / app-level filter
+            .or_(f"user_id.eq.{user.sub},user_id.is.null")
             .order("created_at", desc=True)
             .limit(50)
             .execute()
