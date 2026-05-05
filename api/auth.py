@@ -1,8 +1,10 @@
 import os
 import time
 import logging
+import requests as http_requests
 from typing import Optional
 from dataclasses import dataclass
+from functools import lru_cache
 
 from fastapi import Depends, HTTPException, Header, status
 from jose import jwt, JWTError, ExpiredSignatureError
@@ -11,10 +13,17 @@ logger = logging.getLogger("kozi.auth")
 
 # ─── Config ───────────────────────────────────────────────────────────────────
 SUPABASE_JWT_SECRET = os.getenv("SUPABASE_JWT_SECRET", "")
+SUPABASE_URL        = os.getenv("SUPABASE_URL", "")
+
+if not SUPABASE_URL:
+    logger.warning(
+        "SUPABASE_URL is not set. ES256 token verification will fail. "
+        "Add it in Railway: Settings → Variables → SUPABASE_URL"
+    )
 
 if not SUPABASE_JWT_SECRET:
     logger.warning(
-        "SUPABASE_JWT_SECRET is not set, all protected endpoints will return 401. "
+        "SUPABASE_JWT_SECRET is not set. HS256 token verification will fail. "
         "Add it in Railway: Settings → Variables → SUPABASE_JWT_SECRET"
     )
 
@@ -31,30 +40,106 @@ class UserClaims:
     aal:  Optional[str] = None
 
 
+# ─── JWKS fetch (cached — Supabase keys rotate rarely) ───────────────────────
+@lru_cache(maxsize=1)
+def _fetch_jwks() -> dict:
+    """Fetch Supabase's public JWKS. Cached for process lifetime."""
+    url = f"{SUPABASE_URL}/auth/v1/.well-known/jwks.json"
+    try:
+        resp = http_requests.get(url, timeout=10)
+        resp.raise_for_status()
+        logger.info(f"JWKS fetched from {url}")
+        return resp.json()
+    except Exception as e:
+        logger.error(f"Failed to fetch JWKS from Supabase: {e}")
+        raise
+
+
+def _get_jwk_for_token(token: str) -> Optional[dict]:
+    """Extract kid from token header, find matching key in JWKS."""
+    try:
+        header = jwt.get_unverified_header(token)
+        kid = header.get("kid")
+        alg = header.get("alg")
+        logger.debug(f"Token header: alg={alg}, kid={kid}")
+    except Exception as e:
+        logger.warning(f"Could not read token header: {e}")
+        return None
+
+    if not kid:
+        return None
+
+    jwks = _fetch_jwks()
+    for key in jwks.get("keys", []):
+        if key.get("kid") == kid:
+            return key
+    return None
+
+
 # ─── Core verification ────────────────────────────────────────────────────────
 def _verify_token(token: str) -> UserClaims:
-    if not SUPABASE_JWT_SECRET:
+    try:
+        header = jwt.get_unverified_header(token)
+        alg = header.get("alg", "HS256")
+    except JWTError as e:
+        logger.warning(f"Could not parse token header: {e}")
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Server misconfiguration: SUPABASE_JWT_SECRET not set",
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or malformed token",
+            headers={"WWW-Authenticate": "Bearer"},
         )
 
     try:
-        payload = jwt.decode(
-            token,
-            SUPABASE_JWT_SECRET,
-            algorithms=["HS256"],
-            options={
-                "require": ["sub", "exp", "iat"],
-                "verify_aud": False,
-            },
-        )
+        if alg == "ES256":
+            # New Supabase ECC signing — verify against JWKS public key
+            if not SUPABASE_URL:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Server misconfiguration: SUPABASE_URL not set",
+                )
+            jwk = _get_jwk_for_token(token)
+            if not jwk:
+                logger.warning("No matching JWK found for token kid")
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Invalid or malformed token",
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+            payload = jwt.decode(
+                token,
+                jwk,
+                algorithms=["ES256"],
+                options={
+                    "require": ["sub", "exp", "iat"],
+                    "verify_aud": False,
+                },
+            )
+
+        else:
+            # Legacy HS256 — verify against shared secret
+            if not SUPABASE_JWT_SECRET:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Server misconfiguration: SUPABASE_JWT_SECRET not set",
+                )
+            payload = jwt.decode(
+                token,
+                SUPABASE_JWT_SECRET,
+                algorithms=["HS256"],
+                options={
+                    "require": ["sub", "exp", "iat"],
+                    "verify_aud": False,
+                },
+            )
+
     except ExpiredSignatureError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Session expired, please log in again",
             headers={"WWW-Authenticate": "Bearer"},
         )
+    except HTTPException:
+        raise
     except JWTError as e:
         logger.warning(f"JWT verification failed: {e}")
         raise HTTPException(
@@ -63,7 +148,7 @@ def _verify_token(token: str) -> UserClaims:
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    # Custom session age check via iat (issued-at timestamp)
+    # Custom session age check via iat
     iat = payload.get("iat")
     if iat:
         age = time.time() - iat
