@@ -16,7 +16,9 @@ logger = logging.getLogger(__name__)
 class SupabaseClient:
     def __init__(self):
         self.url = os.getenv("SUPABASE_URL")
-        self.key = os.getenv("SUPABASE_KEY")
+        # Service role key bypasses RLS for server-side writes.
+        # Never expose this key client-side.
+        self.key = os.getenv("SUPABASE_SERVICE_KEY") or os.getenv("SUPABASE_KEY")
 
         if not self.url or not self.key:
             raise ValueError("SUPABASE_URL and SUPABASE_KEY must be set in environment")
