@@ -46,7 +46,7 @@ _TOOL_DIR = os.path.join(
 )
 
 # ── POPULATION MAPPING ───────────────────────────────────────────────────────
-# IEDB tool population strings — verified against configure.py in the tool
+# IEDB tool population strings - verified against configure.py in the tool
 IEDB_POPULATIONS = {
     "global":       "Area > World",
     "african":      "Area > Africa",
@@ -125,7 +125,7 @@ def _load_iedb_tool() -> Optional[Any]:
         from population_calculation import PopulationCoverage
         return PopulationCoverage
     except Exception as e:
-        logger.warning(f"N7: IEDB coverage tool import failed: {e} — using AFND fallback")
+        logger.warning(f"N7: IEDB coverage tool import failed: {e} - using AFND fallback")
         return None
 
 
@@ -255,7 +255,7 @@ class CoverageAgent:
             method_note = (
                 "IEDB Population Coverage Tool v3.0.1 (Gyaltsen et al. 2017)"
                 if self._using_iedb_tool
-                else "AFND 2020 static frequencies (Gonzalez-Galarza et al. 2020) — fallback"
+                else "AFND 2020 static frequencies (Gonzalez-Galarza et al. 2020) - fallback"
             )
 
             candidate.add_decision(
@@ -296,7 +296,7 @@ class CoverageAgent:
                 if result:
                     coverage_results[pop_key] = result
                 else:
-                    # Per-population fallback — don't abort the whole candidate
+                    # Per-population fallback - don't abort the whole candidate
                     coverage_results[pop_key] = self._fallback_single_pop(
                         candidate, pop_key
                     )
@@ -308,7 +308,7 @@ class CoverageAgent:
                 )
             return coverage_results
         except Exception as e:
-            logger.error(f"N7: IEDB tool path failed: {e} — falling back")
+            logger.error(f"N7: IEDB tool path failed: {e} - falling back")
             return self._coverage_via_fallback(candidate)
         finally:
             if epitope_file and os.path.exists(epitope_file):
