@@ -1,17 +1,15 @@
-# Stable Python version
-FROM python:3.11-slim
-
-WORKDIR /app
-
 # Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc curl perl make wget tar \
     && rm -rf /var/lib/apt/lists/*
 
-
 # Install Python deps
 COPY requirements_api_lean.txt ./
 RUN pip install --no-cache-dir -r requirements_api_lean.txt
+
+# Download MHCflurry models at build time so runtime has no dependency on download
+# Models are cached in /root/.local/share/mhcflurry
+RUN mhcflurry-downloads fetch
 
 # Copy source
 COPY src/ src/
