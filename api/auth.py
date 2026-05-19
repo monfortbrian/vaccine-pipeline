@@ -40,7 +40,7 @@ class UserClaims:
     aal:  Optional[str] = None
 
 
-# ─── JWKS fetch (cached — Supabase keys rotate rarely) ───────────────────────
+# ─── JWKS fetch (cached - Supabase keys rotate rarely) ───────────────────────
 @lru_cache(maxsize=1)
 def _fetch_jwks() -> dict:
     """Fetch Supabase's public JWKS. Cached for process lifetime."""
@@ -91,7 +91,7 @@ def _verify_token(token: str) -> UserClaims:
 
     try:
         if alg == "ES256":
-            # New Supabase ECC signing — verify against JWKS public key
+            # New Supabase ECC signing - verify against JWKS public key
             if not SUPABASE_URL:
                 raise HTTPException(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -116,7 +116,7 @@ def _verify_token(token: str) -> UserClaims:
             )
 
         else:
-            # Legacy HS256 — verify against shared secret
+            # Legacy HS256 - verify against shared secret
             if not SUPABASE_JWT_SECRET:
                 raise HTTPException(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
