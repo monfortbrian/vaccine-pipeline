@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 class IEDBClient:
     def __init__(self):
-        self.base_url = "http://tools-cluster-interface.iedb.org/tools_api"
+        self.base_url = "https://tools-cluster-interface.iedb.org/tools_api"
         self.session = requests.Session()
         self.session.headers.update({"User-Agent": "Kozi-Pipeline/2.0"})
         self.max_retries = 3
