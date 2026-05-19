@@ -222,16 +222,84 @@ class SafetyFilterAgent:
             return "unknown"
 
     def _check_human_homology(self, sequence: str) -> float:
-        known_human_peptides = [
-            "GILGFVFTL", "NLVPMVATV", "GLCTLVAML",
-            "FLRGRAYGL", "ELAGIGILTV", "YLQPRTFLL",
-            "KLGGALQAK", "RLRAEAQVK", "ATDALMTGY",
-        ]
-        max_identity = 0.0
-        for human_pep in known_human_peptides:
-            identity = self._local_identity(sequence, human_pep)
-            max_identity = max(max_identity, identity)
-        return max_identity * 100
+    """
+    NCBI BLAST remote search against human proteome (taxid:9606).
+    Returns max identity % found. 0.0 if BLAST unavailable.
+    Reference: Altschul et al., J Mol Biol 1990.
+    """
+    import os
+    ncbi_key = os.getenv("NCBI_API_KEY", "")
+
+    if len(sequence) < 8:
+        return 0.0
+
+    try:
+        # Submit BLAST search
+        submit_url = "https://blast.ncbi.nlm.nih.gov/blast/Blast.cgi"
+        submit_params = {
+            "CMD": "Put",
+            "PROGRAM": "blastp",
+            "DATABASE": "refseq_protein",
+            "QUERY": sequence,
+            "ENTREZ_QUERY": "Homo sapiens[Organism]",
+            "FORMAT_TYPE": "JSON2",
+            "HITLIST_SIZE": "5",
+            "EXPECT": "1",
+            "WORD_SIZE": "3",
+            "api_key": ncbi_key,
+        }
+        resp = self.session.post(submit_url, data=submit_params, timeout=30)
+        resp.raise_for_status()
+
+        # Extract RID
+        rid_match = re.search(r'RID = ([A-Z0-9]+)', resp.text)
+        if not rid_match:
+            logger.debug("BLAST: could not extract RID")
+            return 0.0
+        rid = rid_match.group(1)
+
+        # Poll for results (max 60s)
+        for _ in range(12):
+            time.sleep(5)
+            result_resp = self.session.get(
+                submit_url,
+                params={
+                    "CMD": "Get",
+                    "RID": rid,
+                    "FORMAT_TYPE": "JSON2",
+                    "api_key": ncbi_key,
+                },
+                timeout=30,
+            )
+            if "Status=WAITING" in result_resp.text:
+                continue
+            if "Status=FAILED" in result_resp.text:
+                logger.debug("BLAST search failed")
+                return 0.0
+
+            # Parse max identity
+            identity_matches = re.findall(
+                r'"identity"\s*:\s*(\d+)', result_resp.text
+            )
+            length_matches = re.findall(
+                r'"align_len"\s*:\s*(\d+)', result_resp.text
+            )
+            if identity_matches and length_matches:
+                max_pct = max(
+                    int(i) / int(l) * 100
+                    for i, l in zip(identity_matches, length_matches)
+                    if int(l) > 0
+                )
+                logger.info(f"BLAST human homology: {max_pct:.1f}%")
+                return max_pct
+            return 0.0
+
+        logger.debug("BLAST timed out")
+        return 0.0
+
+    except Exception as e:
+        logger.warning(f"BLAST human homology check failed: {e}")
+        return 0.0
 
     def _local_identity(self, seq1: str, seq2: str) -> float:
         if not seq1 or not seq2:
