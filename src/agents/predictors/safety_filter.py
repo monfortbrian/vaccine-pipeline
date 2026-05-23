@@ -1,5 +1,5 @@
 """
-SAFETY FILTER AGENT — TOPE_DEEP NODE N6
+SAFETY FILTER AGENT - TOPE_DEEP NODE N6
 Screens epitopes for allergenicity, toxicity, and human cross-reactivity.
 
 Tools:
@@ -9,7 +9,7 @@ Tools:
   NCBI BLAST       blast.ncbi.nlm.nih.gov, refseq_protein taxid:9606
                    (Altschul et al., J Mol Biol 1990, 215:403-410)
 
-DESIGN RULE — inconclusive != safe (fixed from previous version)
+DESIGN RULE - inconclusive != safe (fixed from previous version)
   When external tools time out or are unreachable, epitopes are marked
   allergenicity_safe=None, toxicity_safe=None.
   They are NEVER marked True on insufficient evidence.
@@ -18,8 +18,8 @@ DESIGN RULE — inconclusive != safe (fixed from previous version)
 Verdict logic:
   PASS      all tools returned explicit non-allergen / non-toxic
   FAIL      explicit allergen or toxic signal (consensus or toxic)
-  FLAGGED   partial allergen signal (one tool only) — conservative, excluded from N8
-  UNSCORED  all tools inconclusive — excluded from N8, labeled in audit
+  FLAGGED   partial allergen signal (one tool only) - conservative, excluded from N8
+  UNSCORED  all tools inconclusive - excluded from N8, labeled in audit
 
 allergenicity_safe / toxicity_safe:
   PASS     -> True  / True
@@ -68,7 +68,7 @@ class _CircuitBreaker:
         self.failures += 1
         if self.failures >= _CB_THRESHOLD and not self.open:
             logger.warning(
-                f"N6 circuit breaker OPEN: {self.name} — "
+                f"N6 circuit breaker OPEN: {self.name} - "
                 f"{self.failures} consecutive failures. "
                 f"Affected epitopes marked unscored (None), not safe."
             )
@@ -298,7 +298,7 @@ class SafetyFilterAgent:
         if allergen_flags:
             return VERDICT_FLAGGED, all_flags, method_used
 
-        # All inconclusive — cannot confirm safety
+        # All inconclusive - cannot confirm safety
         if not allergen_flags and not toxic_flags and inconclusive_flags:
             return VERDICT_UNSCORED, all_flags, method_used
 
@@ -445,7 +445,7 @@ class SafetyFilterAgent:
     # ── DIAGNOSTICS ───────────────────────────────────────────────────────────
 
     def get_tool_status(self) -> Dict[str, str]:
-        """Circuit breaker state per tool — exposed via /api/health."""
+        """Circuit breaker state per tool - exposed via /api/health."""
         return {
             "allertop":   self._cb_allertop.status(),
             "allergenfp": self._cb_allergenfp.status(),
