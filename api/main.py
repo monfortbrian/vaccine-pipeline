@@ -9,6 +9,15 @@ Endpoints:
   GET  /api/health                - Health check (public)
   WS   /ws/pipeline/{id}          - Real-time progress via WebSocket (requires token query param)
 
+Pipeline nodes:
+  N2  Antigen screening     VaxiJen, Phobius
+  N3  T-cell prediction     NetMHCpan, NetMHCIIpan
+  N4  B-cell prediction     IEDB BepiPred 2.0
+  N5  Structure retrieval   AlphaFold DB
+  N6  Safety screening      AllerTOP, ToxinPred
+  N7  Population coverage   IEDB Coverage Tool
+  N8  Construct design      ProtParam (Biopython)
+
 Run:
   uvicorn api.main:app --reload --port 8000
 """
@@ -18,6 +27,8 @@ from src.agents.predictors.coverage_agent import CoverageAgent
 from src.agents.predictors.safety_filter import SafetyFilterAgent
 from src.agents.predictors.bcell_predictor import BCellPredictorAgent
 from src.agents.predictors.tcell_predictor import TCellPredictorAgent
+from src.agents.predictors.structure_agent import StructureAgent
+from src.agents.predictors.construct_designer import ConstructDesignerAgent
 from src.models.candidate import (
     CandidateProtein, CandidateStatus, PipelineRun,
     EpitopeResult, EpitopeType, ConfidenceTier,
@@ -67,16 +78,15 @@ def root():
     return {"message": "Welcome to the Kozi AI Vaccine Discovery API. Visit /docs for API documentation."}
 
 
+_CORS_ORIGINS: list[str] = [
+    origin.strip()
+    for origin in os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",")
+    if origin.strip()
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://localhost:3001",
-        "https://kozi-ai.com",
-        "https://playground-kozi-ai.netlify.app",
-        "https://playground-kozi-ai-old.netlify.app",
-        "https://playground.kozi-ai.com",
-    ],
+    allow_origins=_CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -138,9 +148,25 @@ class CandidateResponse(BaseModel):
     bcell_count: int
     global_coverage_pct: float
     african_coverage_pct: float
+    structure_source: Optional[str] = None
+    structure_pdb_url: Optional[str] = None
     epitopes: List[EpitopeResponse]
     decisions: List[Dict[str, Any]]
     coverage_detail: Optional[Dict[str, Any]] = None
+
+
+class ConstructReport(BaseModel):
+    construct_sequence: str
+    length_aa: int
+    epitope_counts: Dict[str, int]
+    physicochemical: Dict[str, Any]
+    adjuvant_included: bool
+    adjuvant_sequence: Optional[str]
+    adjuvant_reference: Optional[str]
+    linker_scheme: Dict[str, str]
+    linker_reference: str
+    limitations: List[str]
+    next_steps: List[str]
 
 
 class PipelineResult(BaseModel):
@@ -148,6 +174,7 @@ class PipelineResult(BaseModel):
     status: str
     timing: Dict[str, float]
     candidates: List[CandidateResponse]
+    construct_report: Optional[Dict[str, Any]] = None
 
 
 # --HELPER: FETCH FROM UNIPROT
@@ -289,6 +316,15 @@ def run_pipeline_sync(
         n4_time = time.time() - n4_start
         run["progress"] = 0.55
 
+        # N5: Structure
+        run["current_node"] = "N5"
+        run["message"] = "Retrieving AlphaFold structures..."
+        n5_start = time.time()
+        n5 = StructureAgent()
+        candidates = n5.run(candidates)
+        n5_time = time.time() - n5_start
+        run["progress"] = 0.65
+
         # N6: Safety
         n6_time = 0
         if run_safety:
@@ -298,7 +334,7 @@ def run_pipeline_sync(
             n6 = SafetyFilterAgent()
             candidates = n6.run(candidates)
             n6_time = time.time() - n6_start
-        run["progress"] = 0.8
+        run["progress"] = 0.80
 
         # N7: Coverage
         n7_time = 0
@@ -309,7 +345,17 @@ def run_pipeline_sync(
             n7 = CoverageAgent()
             candidates = n7.run(candidates)
             n7_time = time.time() - n7_start
-        run["progress"] = 0.95
+        run["progress"] = 0.92
+
+        # N8: Construct design
+        run["current_node"] = "N8"
+        run["message"] = "Assembling multi-epitope construct (ProtParam)..."
+        n8_start = time.time()
+        n8 = ConstructDesignerAgent()
+        candidates, construct_report = n8.run(candidates)
+        n8_time = time.time() - n8_start
+        run["construct_report"] = construct_report
+        run["progress"] = 0.98
 
         # Save to Supabase
         try:
@@ -327,11 +373,9 @@ def run_pipeline_sync(
                 status="completed",
             )
 
-            # Pass user_id into create_run so it's set from the start
             db.create_run(pipeline_run, user_id=user_id)
             db.update_run_stage(run_id, "completed", "completed")
 
-            # Save each candidate + its epitopes, all tagged with user_id
             for candidate in candidates:
                 db.save_candidate(run_id, candidate, user_id=user_id)
 
@@ -352,8 +396,10 @@ def run_pipeline_sync(
             "n2_screening": round(n2_time, 1),
             "n3_tcell": round(n3_time, 1),
             "n4_bcell": round(n4_time, 1),
+            "n5_structure": round(n5_time, 1),
             "n6_safety": round(n6_time, 1),
             "n7_coverage": round(n7_time, 1),
+            "n8_construct": round(n8_time, 1),
         }
         run["candidates"] = candidates
 
@@ -404,6 +450,8 @@ def candidate_to_response(c: CandidateProtein) -> CandidateResponse:
         bcell_count=len(c.bcell_epitopes),
         global_coverage_pct=round((c.hla_coverage_global or 0) * 100, 1),
         african_coverage_pct=round((c.hla_coverage_africa or 0) * 100, 1),
+        structure_source=c.structure_source,
+        structure_pdb_url=c.structure_pdb_path,
         epitopes=epitopes,
         decisions=c.decisions,
         coverage_detail=coverage_detail,
@@ -422,11 +470,11 @@ async def health():
 async def start_pipeline(
     req: PipelineRequest,
     background_tasks: BackgroundTasks,
-    user: UserClaims = Depends(require_user),   # 401 if token missing/expired
+    user: UserClaims = Depends(require_user),
 ):
     """Start a new pipeline run. Returns immediately with run_id for polling."""
     run_id = str(uuid.uuid4())
-    user_id = user.sub  # verified Supabase UUID
+    user_id = user.sub
 
     candidates = []
 
@@ -484,7 +532,7 @@ async def start_pipeline(
 
     active_runs[run_id] = {
         "run_id": run_id,
-        "user_id": user_id,          # scoped to authenticated user
+        "user_id": user_id,
         "status": "pending",
         "current_node": None,
         "progress": 0.0,
@@ -495,6 +543,7 @@ async def start_pipeline(
         "started_at": None,
         "completed_at": None,
         "candidates": None,
+        "construct_report": None,
         "timing": None,
     }
 
@@ -511,14 +560,13 @@ async def start_pipeline(
 @app.get("/api/pipeline/status/{run_id}", response_model=PipelineStatus)
 async def get_pipeline_status(
     run_id: str,
-    user: UserClaims = Depends(require_user),   # users can only see their own runs
+    user: UserClaims = Depends(require_user),
 ):
     """Poll for pipeline progress. Users can only see their own runs."""
     run = active_runs.get(run_id)
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
 
-    # Ownership check - prevent users from polling other users' runs
     if run.get("user_id") and run["user_id"] != user.sub:
         raise HTTPException(status_code=403, detail="Access denied")
 
@@ -536,7 +584,7 @@ async def get_pipeline_status(
 @app.get("/api/pipeline/results/{run_id}", response_model=PipelineResult)
 async def get_pipeline_results(
     run_id: str,
-    user: UserClaims = Depends(require_user),  # users can only see their own runs
+    user: UserClaims = Depends(require_user),
 ):
     """Get completed pipeline results. Users can only see their own runs."""
     run = active_runs.get(run_id)
@@ -557,17 +605,16 @@ async def get_pipeline_results(
         status="completed",
         timing=run.get("timing", {}),
         candidates=candidates_response,
+        construct_report=run.get("construct_report"),
     )
 
 
 @app.get("/api/runs")
-async def list_runs(user: UserClaims = Depends(require_user)):  # 🔒
+async def list_runs(user: UserClaims = Depends(require_user)):
     """List runs for the authenticated user only."""
     runs = []
 
-    # In-memory runs scoped to this user
     for run_id, run in active_runs.items():
-        # Show runs owned by this user OR runs with no owner (legacy)
         run_user_id = run.get("user_id")
         if run_user_id is not None and run_user_id != user.sub:
             continue
@@ -592,9 +639,9 @@ async def list_runs(user: UserClaims = Depends(require_user)):  # 🔒
             "started_at": run.get("started_at"),
             "completed_at": run.get("completed_at"),
             "global_coverage_pct": global_coverage,
+            "has_construct": run.get("construct_report") is not None,
         })
 
-    # Also fetch completed runs from Supabase already scoped via user_id column
     try:
         from src.storage.supabase_client import db
         db_runs = (
@@ -631,6 +678,7 @@ async def list_runs(user: UserClaims = Depends(require_user)):  # 🔒
                     "started_at": db_run.get("created_at"),
                     "completed_at": db_run.get("completed_at"),
                     "global_coverage_pct": cov,
+                    "has_construct": False,  # not stored in Supabase yet
                 })
     except Exception as e:
         logger.warning(f"Failed to fetch runs from Supabase: {e}")
@@ -639,11 +687,12 @@ async def list_runs(user: UserClaims = Depends(require_user)):  # 🔒
 
 
 # --WEBSOCKET FOR REAL-TIME PROGRESS UPDATES
+
 @app.websocket("/ws/pipeline/{run_id}")
 async def pipeline_websocket(
     websocket: WebSocket,
     run_id: str,
-    token: Optional[str] = Query(None),   # ?token=<bearer>
+    token: Optional[str] = Query(None),
 ):
     """
     WebSocket for real-time pipeline progress updates.
@@ -652,7 +701,6 @@ async def pipeline_websocket(
     """
     await websocket.accept()
 
-    # Validate token (WebSockets can't send Authorization headers easily)
     if not token:
         await websocket.send_json({"error": "Missing token", "code": 401})
         await websocket.close(code=4001)
@@ -674,7 +722,6 @@ async def pipeline_websocket(
                 await websocket.send_json({"error": "Run not found"})
                 break
 
-            # Ownership check
             if run.get("user_id") and run["user_id"] != user.sub:
                 await websocket.send_json({"error": "Access denied", "code": 403})
                 break
