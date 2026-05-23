@@ -1,53 +1,41 @@
-# TOPE_DEEP API — Dockerfile
-# Python 3.11-slim base
+version: '3.8'
+
+# Backend only.
+# Frontend: `next dev` locally, Netlify for staging and production.
 #
-# Tools bundled at build time (no runtime downloads):
-#   MHCflurry 2.0 models — mhcflurry-downloads fetch
-#   IEDB Population Coverage Tool v3.0.1 — bundled in src/tools/population_coverage/
+# Local dev:  docker compose up --build
+# Production: Railway handles deployment - this file is NOT used in production.
 #
-# PSORTb note:
-#   PSORTb v3.0 requires Docker-in-Docker which Railway does not support.
-#   Phobius (phobius.sbc.su.se) is used for transmembrane/signal peptide prediction.
-#   This is scientifically equivalent for surface antigen identification.
-#   Reference: Kall et al., J Mol Biol 2004; Gardy et al., Bioinformatics 2003.
+# Port mapping: host:container both 8000.
+# Railway sets PORT at runtime; locally it defaults to 8000 via Dockerfile CMD.
 
-FROM python:3.11-slim
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile # must match the actual filename
+    ports:
+      - '${API_PORT:-8000}:8000' # host:container - change API_PORT in .env if 8000 is taken
+    volumes:
+      # Mount source for hot reload without rebuilding the image.
+      # uvicorn --reload watches these paths inside the container.
+      - ./src:/app/src:ro
+      - ./api:/app/api:ro
+    env_file:
+      - .env
+    environment:
+      - PYTHONUNBUFFERED=1 # flush logs immediately - critical for Railway visibility
+      - PYTHONDONTWRITEBYTECODE=1 # no .pyc files written inside the container
+    command: >
+      sh -c "uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload"
+    restart: unless-stopped
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://localhost:8000/api/health']
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s # give uvicorn time to boot before health checks fire
 
-WORKDIR /app
-
-# System deps
-# libgomp1: required by MHCflurry (OpenMP threading in sklearn/numpy)
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc curl perl make wget tar libgomp1 \
-    && rm -rf /var/lib/apt/lists/*
-
-# Python deps
-COPY requirements_api_lean.txt ./
-RUN pip install --no-cache-dir -r requirements_api_lean.txt
-
-# MHCflurry models — downloaded at build time, cached in image
-# Prevents runtime dependency on external download servers
-# Models: ~200MB, stored at /root/.local/share/mhcflurry/
-RUN mhcflurry-downloads fetch && \
-    echo "MHCflurry models downloaded successfully" && \
-    ls /root/.local/share/mhcflurry/ || echo "WARNING: MHCflurry model directory not found"
-
-# Copy source
-COPY src/ src/
-COPY data/ data/
-COPY api/ api/
-COPY run_pipeline.py ./
-
-# IEDB Population Coverage Tool v3.0.1
-# Bundled at src/tools/population_coverage/ in the repo.
-# Without this, N7 silently uses AFND 2020 static fallback.
-# The COPY src/ above handles this IF the tool is committed to src/tools/.
-# Verify: src/tools/population_coverage/population_calculation.py must exist.
-RUN python3 -c "import sys; sys.path.insert(0,'src/tools/population_coverage'); \
-    from population_calculation import PopulationCoverage; \
-    print('N7 IEDB tool: OK')" \
-    || echo "WARNING: N7 IEDB coverage tool not found — will use AFND 2020 fallback"
-
-EXPOSE 8000
-
-CMD ["sh", "-c", "uvicorn api.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+networks:
+  default:
+    name: kozi-local
