@@ -1,10 +1,10 @@
 """
-T-CELL PREDICTOR AGENT — TOPE_DEEP NODE N3
+T-CELL PREDICTOR AGENT - TOPE_DEEP NODE N3
 Predicts CTL (MHC-I) and HTL (MHC-II) epitopes.
 
 Primary:  IEDB tools-cluster-interface (NetMHCpan 4.1 EL, NetMHCIIpan 4.3)
 Fallback: MHCflurry 2.0 for MHC-I when IEDB is down (O'Brien et al. 2019)
-          No fallback for MHC-II — logged explicitly in audit trail.
+          No fallback for MHC-II - logged explicitly in audit trail.
 
 IC50 note:
   Values are APPROXIMATED from percentile rank using the IEDB standard
@@ -15,7 +15,7 @@ IC50 note:
 Confidence thresholds:
   CTL (MHC-I):  rank < 0.5 = HIGH, < 2.0 = MEDIUM, < 10.0 = LOW
   HTL (MHC-II): rank < 2.0 = HIGH, < 5.0 = MEDIUM, < 10.0 = LOW
-  MHC-II thresholds differ — naturally higher ranks due to longer binding groove.
+  MHC-II thresholds differ - naturally higher ranks due to longer binding groove.
   Reference: IEDB recommended thresholds (tools.iedb.org/mhcii/help/).
 """
 
@@ -49,11 +49,11 @@ class TCellPredictorAgent:
                 f"({len(candidate.sequence)} aa)"
             )
             try:
-                # CTL — MHC-I
+                # CTL - MHC-I
                 ctl_raw = self.iedb.predict_mhc_i_binding(candidate.sequence)
                 candidate.ctl_epitopes = self._process_ctl(ctl_raw)
 
-                # HTL — MHC-II
+                # HTL - MHC-II
                 htl_raw = self.iedb.predict_mhc_ii_binding(candidate.sequence)
                 candidate.htl_epitopes = self._process_htl(htl_raw)
 
@@ -77,7 +77,7 @@ class TCellPredictorAgent:
                         f"({ctl_high} high confidence, IC50 <500 nM). "
                         f"HTL: {len(candidate.htl_epitopes)} epitopes "
                         f"({htl_high} high confidence). "
-                        + ("HTL prediction returned no results — "
+                        + ("HTL prediction returned no results - "
                            "NetMHCIIpan may be unavailable. "
                            "No MHC-II fallback exists. "
                            "Population coverage will be MHC-I only for this candidate. "
@@ -104,7 +104,7 @@ class TCellPredictorAgent:
                 logger.info(
                     f"      HTL: {len(candidate.htl_epitopes)} "
                     f"({htl_high} high) [{htl_method}]"
-                    + (" — WARNING: no HTL predictions" if htl_failed else "")
+                    + (" - WARNING: no HTL predictions" if htl_failed else "")
                 )
 
             except Exception as e:
