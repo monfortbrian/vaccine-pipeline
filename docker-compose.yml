@@ -1,34 +1,36 @@
 version: "3.8"
 
+# Backend only.
+# Frontend: `next dev` locally, Netlify for staging + production.
+#
+# Local dev:  docker compose up --build
+# CI/prod:    Railway handles deployment — this file is not used in production
+
 services:
   api:
     build:
       context: .
       dockerfile: Dockerfile.api
     ports:
-      - "8001:8001"
+      - "${API_PORT:-8001}:8001"
+    volumes:
+      # Hot reload: mount source so code changes reflect without rebuild
+      # Remove this volume in production image builds
+      - ./src:/app/src:ro
+      - ./api:/app/api:ro
     env_file:
       - .env
     environment:
-      - PYTHONUNBUFFERED=1
+      - PYTHONUNBUFFERED=1    # Flush logs immediately — critical for Railway log visibility
+      - PYTHONDONTWRITEBYTECODE=1  # No .pyc files in container
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8001/api/health"]
       interval: 30s
       timeout: 10s
       retries: 3
+      start_period: 10s     # Give uvicorn time to boot before health checks start
 
-  frontend:
-    build:
-      context: .
-      dockerfile: Dockerfile.frontend
-    ports:
-      - "3000:3000"
-    environment:
-      - NEXT_PUBLIC_API_URL=http://api:8001
-      - NEXT_PUBLIC_SUPABASE_URL=${SUPABASE_URL}
-      - NEXT_PUBLIC_SUPABASE_ANON_KEY=${SUPABASE_KEY}
-    depends_on:
-      api:
-        condition: service_healthy
-    restart: unless-stopped
+networks:
+  default:
+    name: kozi-local
