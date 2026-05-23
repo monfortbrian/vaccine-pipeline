@@ -4,7 +4,7 @@ Wraps the vaccine discovery pipeline as a REST API.
 Endpoints:
   POST /api/pipeline/run          - Start a pipeline run (requires auth)
   GET  /api/pipeline/status/{id}  - Get run status and progress (requires auth)
-  GET  /api/pipeline/results/{id} - Get completed results — falls back to Supabase
+  GET  /api/pipeline/results/{id} - Get completed results - falls back to Supabase
   GET  /api/runs                  - List runs for authenticated user (requires auth)
   GET  /api/health                - Extended health: tool status, N7 method (public)
   WS   /ws/pipeline/{id}          - Real-time progress (token query param)
@@ -54,7 +54,7 @@ logger = logging.getLogger("kozi.api")
 # -- APP
 
 app = FastAPI(
-    title="TOP_DEEP — Vaccine Discovery API",
+    title="TOP_DEEP - Vaccine Discovery API",
     description="TOPE_DEEP epitope-based vaccine target discovery pipeline",
     version="2.1.0",
 )
@@ -358,7 +358,7 @@ def run_pipeline_sync(
             from src.tools.vaxijen_client import vaxijen
             from src.tools.phobius_client import phobius
             for c in candidates:
-                # VaxiJen — organism-aware
+                # VaxiJen - organism-aware
                 score = vaxijen.predict_antigenicity(c.sequence, organism_class)
                 c.vaxijen_score = score
                 # Detect if fallback was used (real VaxiJen returns score from server)
@@ -372,7 +372,7 @@ def run_pipeline_sync(
                 tm_helices = phobius_result.get("num_tm_helices", 0)
                 c.tmhmm_helices = tm_helices
 
-                # Use phobius_localization — not psortb (PSORTb not available on Railway)
+                # Use phobius_localization - not psortb (PSORTb not available on Railway)
                 if phobius_result.get("has_signal_peptide"):
                     c.psortb_localization = "secreted"
                 elif tm_helices == 0:
@@ -580,7 +580,7 @@ def candidate_to_response(c: CandidateProtein) -> CandidateResponse:
 @app.get("/api/health")
 async def health():
     """
-    Extended health check — public endpoint.
+    Extended health check - public endpoint.
     Returns N6 circuit breaker state, N7 coverage method,
     and pipeline dependency status.
     """
@@ -711,7 +711,7 @@ async def get_pipeline_status(run_id: str, user: UserClaims = Depends(require_us
 @app.get("/api/pipeline/results/{run_id}", response_model=PipelineResult)
 async def get_pipeline_results(run_id: str, user: UserClaims = Depends(require_user)):
     """
-    Results endpoint — checks active_runs first, falls back to Supabase.
+    Results endpoint - checks active_runs first, falls back to Supabase.
     Prevents 404 after Railway restarts wipe in-memory state.
     """
     run = active_runs.get(run_id)
@@ -728,7 +728,7 @@ async def get_pipeline_results(run_id: str, user: UserClaims = Depends(require_u
             construct_report=run.get("construct_report"),
         )
 
-    logger.info(f"Run {run_id} not in active_runs — checking Supabase")
+    logger.info(f"Run {run_id} not in active_runs - checking Supabase")
     reconstructed = reconstruct_from_supabase(run_id, user.sub)
 
     if reconstructed is None:
@@ -861,7 +861,7 @@ async def pipeline_websocket(
 async def startup():
     logger.info("Kozi AI TOPE_DEEP API starting (v2.1.0)...")
     if not os.getenv("SUPABASE_JWT_SECRET"):
-        logger.warning("SUPABASE_JWT_SECRET not set — protected endpoints will return 500")
+        logger.warning("SUPABASE_JWT_SECRET not set - protected endpoints will return 500")
     # Log N7 method at startup
     try:
         from src.agents.predictors.coverage_agent import _load_iedb_tool
