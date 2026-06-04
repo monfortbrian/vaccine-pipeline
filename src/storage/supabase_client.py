@@ -1,10 +1,16 @@
+"""
+TOPE_DEEP persistence layer.
+Service role key used for all server-side writes (bypasses RLS).
+Never expose service key client-side.
+"""
+
 import os
+import json
+import logging
 from typing import List, Optional, Dict, Any
+from datetime import datetime
 from supabase import create_client, Client
 from src.models.candidate import PipelineRun, CandidateProtein, EpitopeResult
-import json
-from datetime import datetime
-import logging
 
 if os.getenv("RAILWAY_ENVIRONMENT") is None:
     from dotenv import load_dotenv
@@ -16,60 +22,64 @@ logger = logging.getLogger(__name__)
 class SupabaseClient:
     def __init__(self):
         self.url = os.getenv("SUPABASE_URL")
-        # Service role key bypasses RLS for server-side writes.
-        # Never expose this key client-side.
         self.key = os.getenv("SUPABASE_SERVICE_KEY") or os.getenv("SUPABASE_KEY")
-
         if not self.url or not self.key:
-            raise ValueError("SUPABASE_URL and SUPABASE_KEY must be set in environment")
-
+            raise ValueError("SUPABASE_URL and SUPABASE_KEY must be set")
         self.client: Client = create_client(self.url, self.key)
 
+    # ── RUNS ──────────────────────────────────────────────────────────────────
+
     def create_run(self, run: PipelineRun, user_id: Optional[str] = None) -> str:
-        """Create a new pipeline run in the database."""
-        try:
-            data = {
-                "id": run.run_id,
-                "pathogen_name": run.pathogen_name,
-                "input_type": run.input_type,
-                "raw_input": run.raw_input,
-                "target_populations": run.target_populations,
-                "coverage_threshold": run.coverage_threshold,
-                "max_candidates_output": run.max_candidates_output,
-                "current_stage": run.current_stage,
-                "status": run.status,
-                "config": {
-                    "coverage_loop_count": run.coverage_loop_count,
-                    "coverage_met": run.coverage_met,
-                },
-            }
-            # ── Write user_id at creation time so RLS works immediately ──
-            if user_id:
-                data["user_id"] = user_id
-
-            result = self.client.table("runs").insert(data).execute()
-            logger.info(f"Created run {run.run_id} for pathogen {run.pathogen_name} (user={user_id})")
-            return run.run_id
-
-        except Exception as e:
-            logger.error(f"Failed to create run: {e}")
-            raise
+        data = {
+            "id": run.run_id,
+            "pathogen_name": run.pathogen_name,
+            "input_type": run.input_type,
+            "raw_input": run.raw_input,
+            "target_populations": run.target_populations,
+            "coverage_threshold": run.coverage_threshold,
+            "max_candidates_output": run.max_candidates_output,
+            "current_stage": run.current_stage,
+            "status": run.status,
+            "config": {
+                "coverage_loop_count": run.coverage_loop_count,
+                "coverage_met": run.coverage_met,
+            },
+        }
+        if user_id:
+            data["user_id"] = user_id
+        self.client.table("runs").insert(data).execute()
+        logger.info(f"Created run {run.run_id} (user={user_id})")
+        return run.run_id
 
     def update_run_stage(self, run_id: str, stage: str, status: str = None):
-        """Update the current stage of a pipeline run."""
         update_data = {"current_stage": stage}
         if status:
             update_data["status"] = status
             if status in ["completed", "failed"]:
                 update_data["completed_at"] = datetime.now().isoformat()
-
         self.client.table("runs").update(update_data).eq("id", run_id).execute()
-        logger.info(f"Updated run {run_id} to stage {stage}")
+
+    def update_run_construct(self, run_id: str, construct_report: Dict, timing: Dict):
+        """Persist construct report and timing to runs table."""
+        try:
+            self.client.table("runs").update({
+                "construct_report": construct_report,
+                "timing": timing,
+            }).eq("id", run_id).execute()
+            logger.info(f"Persisted construct + timing for run {run_id}")
+        except Exception as e:
+            # Non-blocking columns may not exist yet if schema not updated
+            logger.warning(f"Could not persist construct/timing (schema may need update): {e}")
+
+    def get_run(self, run_id: str) -> Optional[Dict]:
+        result = self.client.table("runs").select("*").eq("id", run_id).execute()
+        return result.data[0] if result.data else None
+
+    # ── CANDIDATES ────────────────────────────────────────────────────────────
 
     def save_candidate(
         self, run_id: str, candidate: CandidateProtein, user_id: Optional[str] = None
     ) -> str:
-        """Save or update a candidate protein."""
         try:
             existing = (
                 self.client.table("candidates")
@@ -78,8 +88,7 @@ class SupabaseClient:
                 .eq("protein_id", candidate.protein_id)
                 .execute()
             )
-
-            candidate_data = {
+            data = {
                 "run_id": run_id,
                 "protein_id": candidate.protein_id,
                 "protein_name": candidate.protein_name,
@@ -101,31 +110,29 @@ class SupabaseClient:
                 "decisions": candidate.decisions,
                 "updated_at": datetime.now().isoformat(),
             }
-            # ── Tag candidate with user_id for isolation ──
             if user_id:
-                candidate_data["user_id"] = user_id
+                data["user_id"] = user_id
 
             if existing.data:
-                result = (
-                    self.client.table("candidates")
-                    .update(candidate_data)
-                    .eq("id", existing.data[0]["id"])
-                    .execute()
-                )
+                self.client.table("candidates").update(data).eq("id", existing.data[0]["id"]).execute()
                 candidate_db_id = existing.data[0]["id"]
             else:
-                result = self.client.table("candidates").insert(candidate_data).execute()
+                result = self.client.table("candidates").insert(data).execute()
                 candidate_db_id = result.data[0]["id"]
 
-            # Save epitopes (user_id passed through)
             self._save_epitopes(candidate_db_id, run_id, candidate, user_id=user_id)
-
             logger.info(f"Saved candidate {candidate.protein_id}")
             return candidate_db_id
 
         except Exception as e:
             logger.error(f"Failed to save candidate {candidate.protein_id}: {e}")
             raise
+
+    def get_candidates_for_run(self, run_id: str) -> List[Dict]:
+        result = self.client.table("candidates").select("*").eq("run_id", run_id).execute()
+        return result.data
+
+    # ── EPITOPES ──────────────────────────────────────────────────────────────
 
     def _save_epitopes(
         self,
@@ -134,79 +141,45 @@ class SupabaseClient:
         candidate: CandidateProtein,
         user_id: Optional[str] = None,
     ):
-        """Save epitopes for a candidate."""
         self.client.table("epitopes").delete().eq("candidate_id", candidate_id).execute()
 
-        all_epitopes = (
-            candidate.ctl_epitopes + candidate.htl_epitopes + candidate.bcell_epitopes
-        )
+        all_epitopes = candidate.ctl_epitopes + candidate.htl_epitopes + candidate.bcell_epitopes
         if not all_epitopes:
             return
 
-        epitope_data = []
-        for epitope in all_epitopes:
+        rows = []
+        for ep in all_epitopes:
+            # tool_outputs is JSONB save the full dict including method_used,
+            # safety_verdict, safety_method_used, ic50_note, animal_model_alleles.
+            # These fields are read back in get_epitopes_for_candidate() and
+            # used by reconstruct_from_supabase() in main.py and export.ts.
+            tool_outputs = ep.tool_outputs or {}
+
             row = {
                 "candidate_id": candidate_id,
                 "run_id": run_id,
-                "sequence": epitope.sequence,
-                "epitope_type": epitope.epitope_type.value,
-                "hla_allele": epitope.hla_allele,
-                "ic50_nm": epitope.ic50_nm,
-                "percentile_rank": epitope.percentile_rank,
-                "conservation_score": epitope.conservation_score,
-                "allergenicity_safe": epitope.allergenicity_safe,
-                "toxicity_safe": epitope.toxicity_safe,
-                "confidence_tier": epitope.confidence_tier.value,
-                "tool_outputs": epitope.tool_outputs,
-            }
-            # ── Tag epitope with user_id ──
-            if user_id:
-                row["user_id"] = user_id
-            epitope_data.append(row)
-
-        self.client.table("epitopes").insert(epitope_data).execute()
-        logger.info(f"Saved {len(epitope_data)} epitopes for candidate {candidate_id}")
-
-    def log_decision(
-        self,
-        run_id: str,
-        candidate_id: str,
-        stage: str,
-        decision: str,
-        reasoning: str,
-        input_data: Dict[str, Any] = None,
-        user_id: Optional[str] = None,
-    ):
-        """Log an AI decision for audit trail."""
-        try:
-            row = {
-                "run_id": run_id,
-                "candidate_id": candidate_id,
-                "stage": stage,
-                "decision": decision,
-                "reasoning": reasoning,
-                "input_data": input_data or {},
+                "sequence": ep.sequence,
+                "epitope_type": ep.epitope_type.value,
+                "hla_allele": ep.hla_allele,
+                "ic50_nm": ep.ic50_nm,
+                "percentile_rank": ep.percentile_rank,
+                "conservation_score": ep.conservation_score,
+                "allergenicity_safe": ep.allergenicity_safe,
+                "toxicity_safe": ep.toxicity_safe,
+                "confidence_tier": ep.confidence_tier.value,
+                # Full tool_outputs JSONB preserves method_used, safety_verdict,
+                # safety_method_used, ic50_note, animal_model_alleles, mamu_alleles
+                "tool_outputs": tool_outputs,
             }
             if user_id:
                 row["user_id"] = user_id
-            self.client.table("decisions").insert(row).execute()
-            logger.info(f"Logged decision: {stage} -> {decision}")
-        except Exception as e:
-            logger.error(f"Failed to log decision: {e}")
-            raise
+            rows.append(row)
 
-    def get_run(self, run_id: str) -> Optional[Dict]:
-        """Get a pipeline run by ID."""
-        result = self.client.table("runs").select("*").eq("id", run_id).execute()
-        return result.data[0] if result.data else None
-
-    def get_candidates_for_run(self, run_id: str) -> List[Dict]:
-        """Get all candidates for a run."""
-        result = self.client.table("candidates").select("*").eq("run_id", run_id).execute()
-        return result.data
+        # Batch insert
+        self.client.table("epitopes").insert(rows).execute()
+        logger.info(f"Saved {len(rows)} epitopes for candidate {candidate_id}")
 
     def get_epitopes_for_candidate(self, candidate_id: str) -> List[Dict]:
-        """Get all epitopes for a candidate."""
         result = (
             self.client.table("epitopes")
             .select("*")
@@ -215,16 +188,35 @@ class SupabaseClient:
         )
         return result.data
 
+    # ── DECISIONS ─────────────────────────────────────────────────────────────
+
+    def log_decision(
+        self, run_id: str, candidate_id: str, stage: str,
+        decision: str, reasoning: str,
+        input_data: Dict[str, Any] = None, user_id: Optional[str] = None,
+    ):
+        try:
+            row = {
+                "run_id": run_id, "candidate_id": candidate_id,
+                "stage": stage, "decision": decision,
+                "reasoning": reasoning, "input_data": input_data or {},
+            }
+            if user_id:
+                row["user_id"] = user_id
+            self.client.table("decisions").insert(row).execute()
+        except Exception as e:
+            logger.error(f"Failed to log decision: {e}")
+            raise
+
+    # ── DIAGNOSTICS ───────────────────────────────────────────────────────────
+
     def test_connection(self) -> bool:
-        """Test database connection."""
         try:
             self.client.table("runs").select("id").limit(1).execute()
-            logger.info("Database connection successful")
             return True
         except Exception as e:
-            logger.error(f"Database connection failed: {e}")
+            logger.error(f"DB connection failed: {e}")
             return False
 
 
-# Global instance
 db = SupabaseClient()
