@@ -1,5 +1,5 @@
 """
-VaxiJen 2.0 client - antigenicity prediction.
+Antigenicity prediction.
 Version 3.0 - Improved ACC implementation with correct multi-lag transform.
 
 Primary:  HTTP POST to ddg-pharmfac.net/vaxijen (real server, when available).
