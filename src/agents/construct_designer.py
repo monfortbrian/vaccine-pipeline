@@ -1,5 +1,5 @@
 """
-TOPE_DEEP NODE N8
+CONSTRUCT DESIGN AGENT
 Assembles a multi-epitope vaccine construct from prioritised epitopes.
 
 Adjuvant options (configurable via agent constructor):
@@ -32,7 +32,8 @@ from src.models.candidate import (
     CandidateStatus, PipelineRun,
 )
 
-logger = logging.getLogger(__name__)
+from src.utils.logger import get_logger
+logger = get_logger("tope_deep.agents.N8")  # use the correct agent name
 
 # ── Adjuvant registry ─────────────────────────────────────────────────────────
 # Add new adjuvants here. Each entry is independently citable and defensible.
@@ -283,7 +284,7 @@ class ConstructDesignerAgent:
                 log.append({
                     "element": f"linker_{linker_key}",
                     "sequence": linker,
-                    "rationale": f"{prev_type} → {ep_type}",
+                    "rationale": f"{prev_type} - {ep_type}",
                 })
             parts.append((ep.sequence, f"{ep_type}_{index+1}"))
             log.append({

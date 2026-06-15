@@ -1,5 +1,5 @@
 """
-COVERAGE AGENT - MVP-2 NODE N7
+COVERAGE AGENT
 Calculates immune coverage across global HLA populations.
 
 Method: IEDB Population Coverage Tool v3.0.1 (standalone)
@@ -21,7 +21,7 @@ HLA frequency data source:
   Planned upgrade: live AFND query (roadmap Q3).
 
 Populations covered: Global (weighted), Sub-Saharan Africa, East Africa
-  (Kenya/Uganda/Rwanda/Tanzania), Europe, East Asia, South Asia,
+  (Kenya/Uganda/Rwanda/Burundi/Tanzania), Europe, East Asia, South Asia,
   Americas (admixed). Population definitions follow AFND regional groupings.
 
 Fallback: if IEDB tool import fails, uses validated AFND 2020 static
@@ -37,7 +37,8 @@ import re
 from typing import List, Dict, Any, Optional, Set
 from src.models.candidate import CandidateProtein, EpitopeResult, ConfidenceTier
 
-logger = logging.getLogger(__name__)
+from src.utils.logger import get_logger
+logger = get_logger("tope_deep.agents.N7")  # use the correct agent name
 
 # ── IEDB TOOL PATH ────────────────────────────────────────────────────────────
 _TOOL_DIR = os.path.join(
@@ -125,7 +126,7 @@ def _load_iedb_tool() -> Optional[Any]:
         from population_calculation import PopulationCoverage
         return PopulationCoverage
     except Exception as e:
-        logger.warning(f"N7: IEDB coverage tool import failed: {e} - using AFND fallback")
+        logger.warning(f"IEDB coverage tool import failed: {e} - using AFND fallback")
         return None
 
 
@@ -198,7 +199,7 @@ def _run_iedb_coverage(
             "method": "IEDB_tool_v3.0.1",
         }
     except Exception as e:
-        logger.warning(f"N7: IEDB tool call failed for {population_key}: {e}")
+        logger.warning(f"IEDB tool call failed for {population_key}: {e}")
         return None
 
 
@@ -308,7 +309,7 @@ class CoverageAgent:
                 )
             return coverage_results
         except Exception as e:
-            logger.error(f"N7: IEDB tool path failed: {e} - falling back")
+            logger.error(f"IEDB tool path failed: {e} - falling back")
             return self._coverage_via_fallback(candidate)
         finally:
             if epitope_file and os.path.exists(epitope_file):

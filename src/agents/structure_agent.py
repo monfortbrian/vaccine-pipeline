@@ -1,5 +1,5 @@
 """
-STRUCTURE AGENT - TOPE_DEEP NODE N5
+STRUCTURE AGENT
 Version 2.0 - Fixed pLDDT field name resolution.
 
 Change from v1: AlphaFold DB API field name for mean pLDDT has changed
@@ -14,7 +14,8 @@ import requests
 from typing import List, Optional, Dict, Any
 from src.models.candidate import CandidateProtein
 
-logger = logging.getLogger(__name__)
+from src.utils.logger import get_logger
+logger = get_logger("tope_deep.agents.N5")  # use the correct agent name
 
 ALPHAFOLD_API = "https://alphafold.ebi.ac.uk/api/prediction"
 REQUEST_TIMEOUT = 20

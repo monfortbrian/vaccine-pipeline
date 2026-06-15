@@ -1,11 +1,11 @@
 """
-SAFETY FILTER AGENT - TOPE_DEEP NODE N6
+SAFETY FILTER AGENT
 Version 3.0 - Local implementation replacing web scraping.
 
 Architecture: local-first, external-enhancement.
 
 Primary (always available, zero external calls):
-  FAO/WHO allergenicity    - regulatory standard, AllergenOnline database
+  WHO allergenicity    - regulatory standard, AllergenOnline database
   AllerTOP v2.0 local      - Doytchinova & Flower 2014, full lag=1,2 implementation
   HemoPI hemolytic         - Singh et al. 2011, WHO vaccine safety standard
   Human homology local     - FDA/EMA 8-mer threshold, UniProt human Swiss-Prot
@@ -19,7 +19,6 @@ This architecture means:
   - External tools enhance results when available but never block them
   - All results are reproducible regardless of network state
   - Database versions are recorded in every audit trail entry
-  - Defensible to IVI, CEPI, WHO scientific advisory boards
 
 Scientific basis: see src/tools/safety_local.py for full citations.
 """
@@ -41,7 +40,8 @@ from src.tools.safety_local import (
     HEMOPI_VERSION,
 )
 
-logger = logging.getLogger(__name__)
+from src.utils.logger import get_logger
+logger = get_logger("tope_deep.agents.N6")  # use the correct agent name
 
 VERDICT_PASS     = "pass"
 VERDICT_FAIL     = "fail"
@@ -104,7 +104,7 @@ class SafetyFilterAgent:
         if not db_status["allergenonline"]:
             logger.warning(
                 "N6: AllergenOnline database missing. "
-                "FAO/WHO allergenicity screen will use AllerTOP only. "
+                "WHO allergenicity screen will use AllerTOP only. "
                 "Run: python data/safety_db/download_databases.py"
             )
 
@@ -195,7 +195,7 @@ class SafetyFilterAgent:
                     f"{safe_count} passed, {flagged_count} flagged (review required), "
                     f"{fail_count} failed, {unscored_count} unscored "
                     f"out of {len(all_epitopes)} epitopes. "
-                    f"Methods: FAO/WHO 2001 allergenicity protocol "
+                    f"Methods: WHO 2001 allergenicity protocol "
                     f"(AllergenOnline v{ALLERGENONLINE_VERSION}); "
                     f"AllerTOP v{ALLERTOP_VERSION} local "
                     f"(Doytchinova & Flower 2014); "
