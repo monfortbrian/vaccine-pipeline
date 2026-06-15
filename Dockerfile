@@ -24,7 +24,7 @@ COPY api/ api/
 COPY run_pipeline.py ./
 
 # Download safety screening databases
-# AllergenOnline (FAO/WHO regulatory allergen database) + Human Swiss-Prot
+# AllergenOnline (WHO regulatory allergen database) + Human Swiss-Prot
 # Baked into image - zero runtime dependency on external servers
 RUN python data/safety_db/download_databases.py \
     && echo "Safety databases: OK" \
