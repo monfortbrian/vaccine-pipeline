@@ -1,5 +1,5 @@
 """
-MHCflurry 2.0 client - local MHC-I epitope prediction.
+MHCflurry 2.0 client, local MHC-I epitope prediction.
 Fallback when IEDB tools-cluster-interface is unavailable.
 
 Reference: O'Brien et al., Cell Systems 2019, 9(5):452-458.
@@ -11,14 +11,14 @@ Models: downloaded at Docker build time via `mhcflurry-downloads fetch`.
 Predictor used: Class1AffinityPredictor
   Predicts IC50 affinity (nM) per peptide-allele pair.
   Distinct from Class1PresentationPredictor which treats allele list
-  as a diploid genotype (max 6 alleles) - that API is not used here.
+  as a diploid genotype (max 6 alleles), that API is not used here.
 
 Supported alleles: subset of our 15-allele panel confirmed in MHCflurry
   trained allele set. Checked at runtime via predictor.supported_alleles.
 
 Thresholds (equivalent to IEDB NetMHCpan EL):
-  IC50 < 500 nM  → strong binder (HIGH confidence)
-  IC50 < 5000 nM → weak binder  (MEDIUM/LOW confidence)
+  IC50 < 500 nM, strong binder (HIGH confidence)
+  IC50 < 5000 nM, weak binder  (MEDIUM/LOW confidence)
 """
 
 import logging
@@ -121,7 +121,7 @@ class MHCflurryClient:
             frames = []
             for allele in valid_alleles:
                 try:
-                    # predict() accepts parallel lists: peptides[i] → alleles[i]
+                    # predict() accepts parallel lists: peptides[i], alleles[i]
                     df = self.predictor.predict(
                         peptides=peptides,
                         alleles=[allele] * len(peptides),

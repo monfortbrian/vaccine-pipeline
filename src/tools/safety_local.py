@@ -1,17 +1,17 @@
 """
-LOCAL SAFETY SCREENING - TOPE_DEEP N6 LOCAL IMPLEMENTATIONS
+LOCAL SAFETY SCREENING
 Zero external calls. All algorithms implemented from published specifications.
 Version-pinned. Reproducible. Defensible to IVI, CEPI, and scientific advisory boards.
 
 Scientific basis:
 
-1. ALLERGENICITY - FAO/WHO method (regulatory standard)
-   Protocol: FAO/WHO 2001 Expert Consultation on Allergenicity of Foods Derived
-             from Biotechnology. Joint FAO/WHO Expert Consultation, Rome, 2001.
+1. ALLERGENICITY - WHO method (regulatory standard)
+   Protocol: WHO 2001 Expert Consultation on Allergenicity of Foods Derived
+             from Biotechnology. Joint WHO Expert Consultation, Rome, 2001.
    Implementation: sequence identity search against AllergenOnline database
              (University of Nebraska-Lincoln, allergenonline.org).
              Thresholds: >35% identity over 80aa window = potential allergen
-                         Exact 8-mer match = potential allergen (FAO/WHO criterion 2)
+                         Exact 8-mer match = potential allergen (WHO criterion 2)
    Database version: recorded at runtime from allergenonline.org release notes.
    This is the method submitted to WHO/FAO for regulatory approval of vaccines.
    Reference: Ladics et al., Regulatory Toxicology and Pharmacology 2014.
@@ -173,7 +173,7 @@ def _load_databases() -> None:
     else:
         logger.warning(
             f"AllergenOnline database not found at {ALLERGENONLINE_FASTA}. "
-            f"FAO/WHO allergenicity screen unavailable. "
+            f"WHO allergenicity screen unavailable. "
             f"Run: python data/safety_db/download_databases.py"
         )
 
@@ -212,11 +212,11 @@ def _load_databases() -> None:
     _db_loaded = True
 
 
-# ── FAO/WHO allergenicity screen ─────────────────────────────────────────────
+# ── WHO allergenicity screen ─────────────────────────────────────────────
 
 def fao_who_allergenicity(sequence: str) -> Dict:
     """
-    FAO/WHO 2001 allergenicity assessment - regulatory standard.
+    WHO 2001 allergenicity assessment - regulatory standard.
 
     Criterion 1: >35% identity over any 80aa sliding window
     Criterion 2: exact 8-mer match in AllergenOnline database
@@ -239,7 +239,7 @@ def fao_who_allergenicity(sequence: str) -> Dict:
         "matched_8mers": [],
         "db_version": ALLERGENONLINE_VERSION,
         "method": (
-            "FAO/WHO 2001 allergenicity assessment protocol. "
+            "WHO 2001 allergenicity assessment protocol. "
             "AllergenOnline database v" + ALLERGENONLINE_VERSION +
             " (Uni of Nebraska-Lincoln). "
             "Ladics et al., Reg Tox Pharm 2014."
@@ -475,7 +475,7 @@ def screen_epitope_local(sequence: str) -> Dict:
     Returns unified verdict with full provenance.
 
     Verdict logic:
-      FAIL    - any hemolytic signal OR FAO/WHO allergen criterion 1 or 2
+      FAIL    - any hemolytic signal OR WHO allergen criterion 1 or 2
                 OR AllerTOP allergen with high confidence (>0.75)
       FLAGGED - AllerTOP borderline allergen (0.5-0.75 confidence)
                 OR human homology overlap
@@ -490,7 +490,7 @@ def screen_epitope_local(sequence: str) -> Dict:
     toxic_flags = []
     review_flags = []
 
-    # FAO/WHO criterion (regulatory standard - always hard fail)
+    # WHO criterion (regulatory standard - always hard fail)
     if fao["is_allergen"]:
         allergen_flags.append(
             f"fao_who_criterion_{fao['criterion']}_allergen"
@@ -537,7 +537,7 @@ def screen_epitope_local(sequence: str) -> Dict:
         "hemopi": hemopi,
         "human_homology": homology,
         "method_summary": (
-            f"FAO/WHO 2001 allergenicity (AllergenOnline v{ALLERGENONLINE_VERSION}); "
+            f"WHO 2001 allergenicity (AllergenOnline v{ALLERGENONLINE_VERSION}); "
             f"AllerTOP v{ALLERTOP_VERSION} (Doytchinova & Flower 2014); "
             f"HemoPI v{HEMOPI_VERSION} (Singh et al. 2011); "
             f"Human homology FDA/EMA threshold "

@@ -1,5 +1,5 @@
 """
-IEDB B-CELL CLIENT - ANTIBODY EPITOPE PREDICTION
+IEDB B-CELL CLIENT, ANTIBODY EPITOPE PREDICTION
 Uses IEDB BepiPred 2.0 - license-free alternative to BepiPred 3.0.
 
 Response formats:

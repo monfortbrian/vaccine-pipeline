@@ -1,5 +1,5 @@
 """
-IEDB CLIENT - T-CELL EPITOPE PREDICTION
+IEDB CLIENT, T-CELL EPITOPE PREDICTION
 Primary:  IEDB tools-cluster-interface (NetMHCpan 4.1 EL, NetMHCIIpan 4.3)
 Fallback: MHCflurry 2.0 local predictor for MHC-I when IEDB is unavailable
           (O'Brien et al., Cell Systems 2019, Apache 2.0)
@@ -193,7 +193,7 @@ class IEDBClient:
         """
         Parse IEDB TSV response using header-based column detection.
         IC50 values are approximated from percentile rank using the
-        standard IEDB rank→IC50 mapping (Sette & Sidney 1999).
+        standard IEDB rank, IC50 mapping (Sette & Sidney 1999).
         """
         epitopes: List[Dict[str, Any]] = []
         try:
@@ -248,7 +248,7 @@ class IEDBClient:
                         except ValueError:
                             pass
 
-                    # Rank → approximate IC50 (IEDB standard mapping)
+                    # Rank approximate IC50 (IEDB standard mapping)
                     if rank is not None:
                         if rank <= 0.5:
                             approx_ic50 = rank * 100
