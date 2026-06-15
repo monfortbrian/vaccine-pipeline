@@ -38,3 +38,7 @@ results/
 
 data/safety_db/*.fasta
 data/safety_db/*.db
+
+__pycache__/
+*.pyc
+*.pyo
