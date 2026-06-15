@@ -18,13 +18,13 @@ SUPABASE_URL        = os.getenv("SUPABASE_URL", "")
 if not SUPABASE_URL:
     logger.warning(
         "SUPABASE_URL is not set. ES256 token verification will fail. "
-        "Add it in Railway: Settings → Variables → SUPABASE_URL"
+        "Add it in Railway: Settings > Variables > SUPABASE_URL"
     )
 
 if not SUPABASE_JWT_SECRET:
     logger.warning(
         "SUPABASE_JWT_SECRET is not set. HS256 token verification will fail. "
-        "Add it in Railway: Settings → Variables → SUPABASE_JWT_SECRET"
+        "Add it in Railway: Settings > Variables > SUPABASE_JWT_SECRET"
     )
 
 # Custom inactivity session cap, must match INACTIVITY_LIMIT_MS in auth-provider.tsx
