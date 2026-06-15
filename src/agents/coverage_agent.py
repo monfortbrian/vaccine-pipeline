@@ -61,7 +61,7 @@ IEDB_POPULATIONS = {
 POPULATION_NAMES = {
     "global":       "Global",
     "african":      "Sub-Saharan Africa",
-    "east_african": "East Africa (KE/UG/RW/TZ)",
+    "east_african": "East Africa (KE/UG/RW/BI/TZ)",
     "european":     "Europe",
     "east_asian":   "East Asia",
     "south_asian":  "South Asia",
@@ -119,11 +119,11 @@ def _calc_coverage_fallback(alleles: Set[str], population: str, hla_class: str) 
 
 # ── IEDB TOOL WRAPPER ─────────────────────────────────────────────────────────
 def _load_iedb_tool() -> Optional[Any]:
-    """Import PopulationCoverage from the bundled IEDB tool. Returns None if unavailable."""
     try:
-        if _TOOL_DIR not in sys.path:
-            sys.path.insert(0, _TOOL_DIR)
-        from population_calculation import PopulationCoverage
+        _tool_parent = os.path.dirname(_TOOL_DIR)
+        if _tool_parent not in sys.path:
+            sys.path.insert(0, _tool_parent)
+        from population_coverage.population_calculation import PopulationCoverage
         return PopulationCoverage
     except Exception as e:
         logger.warning(f"IEDB coverage tool import failed: {e} - using AFND fallback")
