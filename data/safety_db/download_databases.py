@@ -7,7 +7,7 @@ Run at Docker build time:
 
 Databases downloaded:
   1. AllergenOnline v19 (University of Nebraska-Lincoln)
-     Source: allergenonline.org - FAO/WHO regulatory allergen database
+     Source: allergenonline.org - WHO regulatory allergen database
      Size: ~2MB
      License: free for non-commercial use
 
@@ -65,7 +65,7 @@ def main():
         ok = download(
             url="https://www.allergenonline.org/download/fasta_download.php",
             dest=allergen_dest,
-            description="AllergenOnline allergen sequences (FAO/WHO regulatory database)",
+            description="AllergenOnline allergen sequences (WHO regulatory database)",
         )
         if not ok:
             # Fallback: direct FASTA download URL
