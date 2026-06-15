@@ -35,3 +35,6 @@ setup-frontend.sh
 
 # Results (generated data)
 results/
+
+data/safety_db/*.fasta
+data/safety_db/*.db
