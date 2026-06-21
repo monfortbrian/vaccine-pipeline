@@ -38,7 +38,7 @@ from typing import List, Dict, Any, Optional, Set
 from src.models.candidate import CandidateProtein, EpitopeResult, ConfidenceTier
 
 from src.utils.logger import get_logger
-logger = get_logger("tope_deep.agents.N7")  # use the correct agent name
+logger = get_logger("tope_deep.agents.Agent 7")  # use the correct agent name
 
 # ── IEDB TOOL PATH ────────────────────────────────────────────────────────────
 _TOOL_DIR = os.path.join(
@@ -211,12 +211,12 @@ class CoverageAgent:
         self._PopulationCoverage = _load_iedb_tool()
         self._using_iedb_tool = self._PopulationCoverage is not None
         logger.info(
-            f"N7: Coverage method = "
+            f"Agent 7: Coverage method = "
             f"{'IEDB tool v3.0.1' if self._using_iedb_tool else 'AFND 2020 fallback'}"
         )
 
     def run(self, candidates: List[CandidateProtein]) -> List[CandidateProtein]:
-        logger.info("N7: Starting population coverage analysis")
+        logger.info("Agent 7: Starting population coverage analysis")
         active = [c for c in candidates if c.status.value == "active"]
         logger.info(
             f"   Analyzing {len(active)} candidates across "
@@ -273,7 +273,7 @@ class CoverageAgent:
             )
             candidate.stage = self.stage_name
 
-        logger.info("N7: Coverage analysis complete")
+        logger.info("Agent 7: Coverage analysis complete")
         return candidates
 
     # ── IEDB TOOL PATH ────────────────────────────────────────────────────────
