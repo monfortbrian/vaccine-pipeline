@@ -15,7 +15,7 @@ from typing import List, Optional, Dict, Any
 from src.models.candidate import CandidateProtein
 
 from src.utils.logger import get_logger
-logger = get_logger("tope_deep.agents.N5")  # use the correct agent name
+logger = get_logger("tope_deep.agents.Agent 5")  # use the correct agent name
 
 ALPHAFOLD_API = "https://alphafold.ebi.ac.uk/api/prediction"
 REQUEST_TIMEOUT = 20
@@ -27,7 +27,7 @@ class StructureAgent:
 
     def run(self, candidates: List[CandidateProtein]) -> List[CandidateProtein]:
         active = [c for c in candidates if c.status.value == "active"]
-        logger.info(f"N5 StructureAgent: {len(active)} active candidates")
+        logger.info(f"Agent 5 StructureAgent: {len(active)} active candidates")
 
         for i, candidate in enumerate(active):
             logger.info(
@@ -110,7 +110,7 @@ class StructureAgent:
                 )
 
         total = sum(1 for c in candidates if c.structure_source == "alphafold_db")
-        logger.info(f"N5 complete: {total}/{len(active)} have AlphaFold structures")
+        logger.info(f"Agent 5 complete: {total}/{len(active)} have AlphaFold structures")
         return candidates
 
     def _fetch_alphafold(self, uniprot_id: str) -> Optional[Dict[str, Any]]:
