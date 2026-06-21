@@ -26,11 +26,11 @@ supabase>=2.7.4
 # Scientific
 biopython>=1.84
 
-# N9 Literature Agent
+# Agent 9 Literature Agent
 qdrant-client>=1.7.0
 sentence-transformers>=2.2.0
 
-# N9 fallback vector store
+# Agent 9 fallback vector store
 chromadb>=0.4.0
 
 # Env

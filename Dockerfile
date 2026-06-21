@@ -28,14 +28,14 @@ COPY run_pipeline.py ./
 # Baked into image - zero runtime dependency on external servers
 RUN python data/safety_db/download_databases.py \
     && echo "Safety databases: OK" \
-    || echo "WARNING: Safety database download failed - N6 will use AllerTOP-only mode"
+    || echo "WARNING: Safety database download failed - Agent 6 will use AllerTOP-only mode"
 
 # Verify IEDB coverage tool
 RUN python3 -c "\
 import sys; sys.path.insert(0, 'src/tools/population_coverage'); \
 from population_calculation import PopulationCoverage; \
-print('N7 IEDB tool: OK')" \
-    || echo "WARNING: N7 IEDB tool not found - AFND 2020 fallback active"
+print('Agent 7 IEDB tool: OK')" \
+    || echo "WARNING: Agent 7 IEDB tool not found - AFND 2020 fallback active"
 
 EXPOSE 8000
 

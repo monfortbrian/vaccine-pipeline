@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Download safety screening databases for TOPE_DEEP N6 local implementation.
+Download safety screening databases for TOPE_DEEP Agent 6 local implementation.
 
 Run at Docker build time:
   python data/safety_db/download_databases.py

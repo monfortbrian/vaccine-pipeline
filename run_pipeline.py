@@ -71,10 +71,10 @@ def main():
     p.add_argument("--protein",        type=str,             help="UniProt accession")
     p.add_argument("--sequence",       type=str,             help="Amino acid sequence")
     p.add_argument("--name",           type=str,             help="Protein name (used with --sequence)")
-    p.add_argument("--no-safety",      action="store_true",  help="Skip N6 safety screening")
-    p.add_argument("--no-coverage",    action="store_true",  help="Skip N7 population coverage")
-    p.add_argument("--no-literature",  action="store_true",  help="Skip N9 literature agent")
-    p.add_argument("--no-experiment",  action="store_true",  help="Skip N10 experiment planner")
+    p.add_argument("--no-safety",      action="store_true",  help="Skip Agent 6 safety screening")
+    p.add_argument("--no-coverage",    action="store_true",  help="Skip Agent 7 population coverage")
+    p.add_argument("--no-literature",  action="store_true",  help="Skip Agent 9 literature agent")
+    p.add_argument("--no-experiment",  action="store_true",  help="Skip Agent 10 experiment planner")
     p.add_argument("--output",         type=str, default="results", help="Output directory")
     args = p.parse_args()
 
@@ -116,7 +116,7 @@ def main():
     }
 
     print(f"\nRun ID: {run_id}")
-    print(f"Agents: N1-N10 | Safety={'yes' if config['run_safety'] else 'no'} | Coverage={'yes' if config['run_coverage'] else 'no'}")
+    print(f"Agents: Agent 1-Agent 10 | Safety={'yes' if config['run_safety'] else 'no'} | Coverage={'yes' if config['run_coverage'] else 'no'}")
     print("-" * 60)
 
     o = PipelineOrchestrator()
