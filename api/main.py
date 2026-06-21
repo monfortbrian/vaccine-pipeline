@@ -303,16 +303,22 @@ def _fetch_seq(uid: str) -> Optional[str]:
 def _reconstruct_from_supabase(run_id: str, user_id: str) -> Optional[Dict]:
     try:
         from src.storage.supabase_client import db
-        from src.models.candidate import ConfidenceTier
 
         row = db.get_run(run_id)
         if not row:
+            logger.warning(f"Reconstruction: run {run_id} not found in Supabase")
             return None
-        if row.get("user_id") and row["user_id"] != user_id:
+
+        # FIX: allow reconstruction for runs with NULL user_id (saved before auth was set)
+        # or runs belonging to this user
+        row_user = row.get("user_id")
+        if row_user and row_user != user_id:
+            logger.warning(f"Reconstruction: run {run_id} belongs to different user")
             return None
 
         candidate_rows = db.get_candidates_for_run(run_id)
         if not candidate_rows:
+            logger.warning(f"Reconstruction: no candidates for run {run_id}")
             return None
 
         candidates_out = []
@@ -338,18 +344,19 @@ def _reconstruct_from_supabase(run_id: str, user_id: str) -> Optional[Dict]:
             htl   = [e for e in eps if e.epitope_type == "HTL"]
             bcell = [e for e in eps if "B-cell" in e.epitope_type]
 
+            decisions = cr.get("decisions") or []
             cov_detail = next(
-                (d["per_population"] for d in (cr.get("decisions") or [])
-                 if d.get("stage") == "coverage_analysis" and "per_population" in d),
+                (d.get("per_population") for d in decisions
+                 if d.get("stage") == "coverage_analysis" and d.get("per_population")),
                 None
             )
             vaxijen_method = next(
-                (d.get("vaxijen_method") for d in (cr.get("decisions") or [])
+                (d.get("vaxijen_method") for d in decisions
                  if d.get("stage") == "antigen_screening"),
                 None
             )
             phobius_loc = next(
-                (d.get("phobius_localization") for d in (cr.get("decisions") or [])
+                (d.get("phobius_localization") for d in decisions
                  if d.get("stage") == "antigen_screening"),
                 None
             )
@@ -370,19 +377,28 @@ def _reconstruct_from_supabase(run_id: str, user_id: str) -> Optional[Dict]:
                 vaxijen_score=cr.get("vaxijen_score"),
                 vaxijen_method=vaxijen_method,
                 epitopes=eps,
-                decisions=cr.get("decisions") or [],
+                decisions=decisions,
                 coverage_detail=cov_detail,
             ))
+
+        # Reconstruct timing from candidates decisions if available
+        timing = {"total_seconds": 0}
+        try:
+            timing_row = row.get("timing") or {}
+            if timing_row:
+                timing = timing_row
+        except Exception:
+            pass
 
         return {
             "run_id":           run_id,
             "status":           row.get("status", "completed"),
-            "timing":           {"total_seconds": 0},
+            "timing":           timing,
             "candidates":       candidates_out,
-            "construct_report": None,
+            "construct_report": row.get("construct_report"),
         }
     except Exception as e:
-        logger.error(f"Supabase reconstruction failed for {run_id}: {e}")
+        logger.error(f"Supabase reconstruction failed for {run_id}: {e}", exc_info=True)
         return None
 
 
@@ -414,8 +430,8 @@ def _serialize_candidate(c) -> CandidateOut:
     )
 
     cov_detail = next(
-        (d["per_population"] for d in c.decisions
-         if d.get("stage") == "coverage_analysis" and "per_population" in d),
+        (d.get("per_population") for d in c.decisions
+         if d.get("stage") == "coverage_analysis" and d.get("per_population")),
         None
     )
     vaxijen_method = next(
@@ -448,6 +464,7 @@ def _serialize_candidate(c) -> CandidateOut:
 # ── Pipeline runner (runs in thread pool) ─────────────────────────────────────
 
 def _execute_pipeline(run_id: str, candidates: list, config: Dict):
+   
     from src.orchestrator import PipelineOrchestrator
 
     def _progress(agent: str, pct: float, msg: str):
@@ -457,54 +474,74 @@ def _execute_pipeline(run_id: str, candidates: list, config: Dict):
             "message":       msg,
         })
 
+    # Get user_id BEFORE pipeline runs (Redis has it at this point)
+    user_id = (_get_run(run_id) or {}).get("user_id")
+
+    result       = {}
+    final_status = "failed"
+
     try:
         _patch_run(run_id, {"status": "running", "started_at": datetime.now().isoformat()})
 
         orch   = PipelineOrchestrator()
         result = orch.run(run_id, candidates, config, progress_callback=_progress)
 
-        # Persist to Supabase
-        try:
-            from src.storage.supabase_client import db
-            from src.models.candidate import PipelineRun as PR
-            uid = (_get_run(run_id) or {}).get("user_id")
-            pr  = PR(
-                run_id=run_id,
-                pathogen_name=candidates[0].protein_name if candidates else "unknown",
-                input_type=config.get("input_type", "unknown"),
-                raw_input=candidates[0].sequence[:100] if candidates else "",
-                current_stage="completed",
-                status="completed",
-            )
-            db.create_run(pr, user_id=uid)
-            db.update_run_stage(run_id, "completed", "completed")
-            for c in result["candidates"]:
-                db.save_candidate(run_id, c, user_id=uid)
-            logger.info(f"Supabase saved: {run_id}")
-        except Exception as e:
-            logger.warning(f"Supabase save failed (pipeline still succeeded): {e}")
-
+        final_status = "completed"
         _patch_run(run_id, {
             "status":                "completed",
             "progress":              1.0,
             "current_agent":         None,
             "message":               "Complete",
             "completed_at":          datetime.now().isoformat(),
-            "timing":                result["timing"],
-            "construct_report":      result["construct_report"],
+            "timing":                result.get("timing", {}),
+            "construct_report":      result.get("construct_report"),
             "candidates_serialized": [
                 _serialize_candidate(c).model_dump()
-                for c in result["candidates"]
+                for c in result.get("candidates", [])
             ],
         })
 
     except Exception as e:
         logger.error(f"Pipeline failed [{run_id}]: {e}", exc_info=True)
         _patch_run(run_id, {
-            "status":  "failed",
-            "message": str(e),
+            "status":   "failed",
+            "message":  str(e),
             "progress": 0,
         })
+
+    finally:
+        # ── ALWAYS write to Supabase ──────────────────────────────────────────
+        # Even partial / failed runs are persisted so history page shows them.
+        # This block runs whether pipeline succeeded, partially failed, or crashed.
+        try:
+            from src.storage.supabase_client import db
+            from src.models.candidate import PipelineRun as PR
+
+            completed_at = datetime.now().isoformat() if final_status == "completed" else None
+            timing       = result.get("timing", {}) if result else {}
+
+            # Upsert the run row (create or update)
+            db.upsert_run(
+                run_id       = run_id,
+                user_id      = user_id,
+                input_type   = config.get("input_type", "unknown"),
+                pathogen_name= (candidates[0].protein_name if candidates else "unknown"),
+                status       = final_status,
+                completed_at = completed_at,
+                timing       = timing,
+            )
+
+            # Save candidates (only if pipeline produced them)
+            for c in result.get("candidates", []):
+                try:
+                    db.save_candidate(run_id, c, user_id=user_id)
+                except Exception as ce:
+                    logger.warning(f"Candidate save failed [{run_id}]: {ce}")
+
+            logger.info(f"Supabase persisted [{run_id}] status={final_status}")
+
+        except Exception as e:
+            logger.error(f"Supabase finally-block save failed [{run_id}]: {e}", exc_info=True)
 
 
 # ── v1 router ─────────────────────────────────────────────────────────────────
@@ -568,57 +605,37 @@ async def health():
             "T-cell predictor": {
                 "status": "operational",
                 "tool":   "IEDB NetMHCpan 4.1 EL + NetMHCIIpan 4.3 + MHCflurry 2.0 fallback",
-                "animal_models": [
-                    "Mouse H-2          : C57BL/6 (H-2-Kb, H-2-Db) and BALB/c (H-2-Kd, H-2-Dd)",
-                    "Macaque Mamu       : Mamu-A*01, Mamu-A*02, Mamu-B*17",
-                    "Humanized mouse    : HLA-A*02:01 and HLA-A*24:02 transgenic strains",
-                    "Guinea pig         : GPLA heuristic (sequence similarity to known GPLA-B*01 binders)",
-                ],
             },
             "B-cell predictor": {
                 "status": "operational",
                 "tool":   "IEDB BepiPred 2.0",
-                "note":   "B-cell epitopes flagged for rabbit validation model",
             },
             "Structure agent": {
                 "status": "operational",
                 "tool":   "AlphaFold DB REST (EBI)",
-                "viewer": "Molstar molstar.org/viewer/?afdb={uniprotId}",
             },
             "Safety filter": {
                 "status": "degraded" if n6_degraded else "operational",
-                "tool":   "FAO/WHO 2001 allergenicity + AllerTOP v2.0 + HemoPI + FDA/EMA 8-mer human homology",
+                "tool":   "FAO/WHO 2001 + AllerTOP v2.0 + HemoPI + FDA/EMA 8-mer",
                 "detail": n6_status,
             },
             "Coverage agent": {
                 "status":      "operational",
                 "tool":        n7_method,
-                "populations": [
-                    "global", "african", "east_african",
-                    "european", "east_asian", "south_asian", "americas",
-                ],
             },
             "Construct designer": {
-                "status":    "operational",
-                "tool":      "ProtParam (Biopython)",
-                "adjuvants": ["RS09", "PADRE", "TpD"],
-                "linkers":   "AAY (CTL-CTL), GPGPG (HTL-HTL), KK (CTL-HTL)",
+                "status": "operational",
+                "tool":   "ProtParam (Biopython)",
             },
             "Literature agent": {
                 "status":          "operational" if qdrant_ok else "degraded",
-                "tool":            "PubMed E-utilities + Qdrant in-memory + sentence-transformers",
+                "tool":            "PubMed E-utilities + Qdrant + sentence-transformers",
                 "claude_synthesis": bool(os.getenv("ANTHROPIC_API_KEY")),
-                "pubmed_api_key":   bool(os.getenv("NCBI_API_KEY")),
-                "note":            None if qdrant_ok else "qdrant-client not installed, pip install qdrant-client",
             },
             "Experiment planner": {
-                "status":          "operational",
-                "tool":            "Claude API + template fallback",
+                "status":           "operational",
+                "tool":             "Claude API + template fallback",
                 "claude_available": bool(os.getenv("ANTHROPIC_API_KEY")),
-                "note":            (
-                    "Running template-based plan. Set ANTHROPIC_API_KEY for AI-generated roadmap."
-                    if not os.getenv("ANTHROPIC_API_KEY") else None
-                ),
             },
         },
     }
@@ -634,7 +651,6 @@ async def start_run(
     from src.models.candidate import CandidateProtein, CandidateStatus
     from src.validation.candidate_validator import validate_input
 
-    # Input validation before any agent runs
     val = validate_input(body.input_type, body.input_value)
     if not val.valid:
         raise HTTPException(
@@ -701,18 +717,18 @@ async def start_run(
     }
 
     _set_run(run_id, {
-        "run_id":         run_id,
-        "user_id":        user.sub,
-        "status":         "pending",
-        "current_agent":  None,
-        "progress":       0.0,
-        "message":        f"Queued - {len(candidates)} protein(s) [{organism}]",
-        "input_type":     body.input_type,
-        "input_value":    body.input_value,
-        "protein_count":  len(candidates),
-        "started_at":     None,
-        "completed_at":   None,
-        "input_warning":  val.warning,
+        "run_id":        run_id,
+        "user_id":       user.sub,
+        "status":        "pending",
+        "current_agent": None,
+        "progress":      0.0,
+        "message":       f"Queued {len(candidates)} protein(s) [{organism}]",
+        "input_type":    body.input_type,
+        "input_value":   body.input_value,
+        "protein_count": len(candidates),
+        "started_at":    None,
+        "completed_at":  None,
+        "input_warning": val.warning,
     })
 
     executor.submit(_execute_pipeline, run_id, candidates, config)
@@ -721,7 +737,7 @@ async def start_run(
         run_id=run_id,
         status="pending",
         progress=0.0,
-        message=f"Queued - {len(candidates)} protein(s)" + (
+        message=f"Queue {len(candidates)} protein(s)" + (
             f" | Warning: {val.warning}" if val.warning else ""
         ),
     )
@@ -752,8 +768,21 @@ async def get_results(run_id: str, user: UserClaims = Depends(require_user)):
     if run:
         if run.get("user_id") and run["user_id"] != user.sub:
             raise HTTPException(403, "Access denied.")
-        if run["status"] != "completed":
+        if run["status"] not in ("completed", "failed"):
             raise HTTPException(409, f"Run status is '{run['status']}', not completed yet.")
+        if run["status"] == "failed":
+            # Try Supabase for partial results even on failed runs
+            rec = _reconstruct_from_supabase(run_id, user.sub)
+            if rec and rec.get("candidates"):
+                return RunResult(
+                    run_id=run_id,
+                    status="completed",  # partial but usable
+                    timing=rec["timing"],
+                    candidates=rec["candidates"],
+                    construct_report=rec.get("construct_report"),
+                )
+            raise HTTPException(409, "Run failed with no partial results.")
+
         candidates = [CandidateOut(**c) for c in run.get("candidates_serialized", [])]
         return RunResult(
             run_id=run_id,
@@ -763,6 +792,7 @@ async def get_results(run_id: str, user: UserClaims = Depends(require_user)):
             construct_report=run.get("construct_report"),
         )
 
+    # Not in job store, try Supabase (covers Railway restarts, expired Redis)
     logger.info(f"Run {run_id} not in job store, checking Supabase")
     rec = _reconstruct_from_supabase(run_id, user.sub)
     if not rec:
@@ -834,7 +864,7 @@ async def list_runs(
                 has_construct=False,
             ))
     except Exception as e:
-        logger.warning(f"Supabase list_runs failed: {e}")
+        logger.error(f"Supabase list_runs failed: {e}", exc_info=True)
 
     return RunListResponse(
         runs=runs,
@@ -907,50 +937,34 @@ async def ws_pipeline(
         logger.error(f"WebSocket error [{run_id}]: {e}")
 
 
-# ── Register v1 router ────────────────────────────────────────────────────────
+# ── Register routers ──────────────────────────────────────────────────────────
 
 app.include_router(v1)
 
-
-# ── Legacy routes (keep: existing frontend uses /api/pipeline/*) ──────────────
-
 legacy = APIRouter(prefix="/api")
-
 
 @legacy.get("/health")
 async def _legacy_health():
     return await health()
 
-
 @legacy.post("/pipeline/run")
 @limiter.limit("5/minute")
-async def _legacy_run(
-    request: Request,
-    body:    RunRequest,
-    user:    UserClaims = Depends(require_user),
-):
+async def _legacy_run(request: Request, body: RunRequest, user: UserClaims = Depends(require_user)):
     return await start_run(request, body, user)
-
 
 @legacy.get("/pipeline/status/{run_id}")
 async def _legacy_status(run_id: str, user: UserClaims = Depends(require_user)):
     return await get_status(run_id, user)
 
-
 @legacy.get("/pipeline/results/{run_id}")
 async def _legacy_results(run_id: str, user: UserClaims = Depends(require_user)):
     return await get_results(run_id, user)
 
-
 @legacy.get("/runs")
-async def _legacy_runs(
-    request:  Request,
-    user:     UserClaims = Depends(require_user),
-):
+async def _legacy_runs(request: Request, user: UserClaims = Depends(require_user)):
     page     = int(request.query_params.get("page", 1))
     per_page = int(request.query_params.get("per_page", 20))
     return await list_runs(user, page, per_page)
-
 
 app.include_router(legacy)
 
@@ -987,20 +1001,20 @@ async def startup():
         except Exception:
             logger.warning("Redis: unreachable, in-memory job store active")
     else:
-        logger.info("Redis: REDIS_URL not set, in-memory job store active")
+        logger.warning("Redis: REDIS_URL not set in-memory only. Railway deploys will lose run state.")
 
     if not os.getenv("SUPABASE_JWT_SECRET"):
-        logger.warning("SUPABASE_JWT_SECRET not set, auth endpoints will return 500")
+        logger.warning("SUPABASE_JWT_SECRET not set, auth will fail")
 
     if not os.getenv("ANTHROPIC_API_KEY"):
-        logger.info("ANTHROPIC_API_KEY not set")
+        logger.info("ANTHROPIC_API_KEY not set, It will use template fallback")
 
     try:
         from src.agents.coverage_agent import _load_iedb_tool
         method = "IEDB tool v3.0.1" if _load_iedb_tool() else "AFND 2020 fallback"
         logger.info(f"Coverage: {method}")
     except Exception:
-        logger.warning("Coverage check failed")
+        logger.warning("Coverage agent check failed")
 
     try:
         from qdrant_client import QdrantClient
@@ -1013,4 +1027,4 @@ async def startup():
         from sentence_transformers import SentenceTransformer
         logger.info("SentenceTransformers: ready")
     except ImportError:
-        logger.warning("SentenceTransformers: not installed, pip install sentence-transformers")
+        logger.warning("SentenceTransformers: not installed")
