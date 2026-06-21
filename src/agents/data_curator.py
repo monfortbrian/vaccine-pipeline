@@ -5,16 +5,16 @@ Responsibility: record data provenance for each candidate protein.
 The actual protein fetching happens in main.py (before the pipeline starts)
 because it requires HTTP calls with different logic per input type.
 
-N1's job within the pipeline:
+Agent 1's job within the pipeline:
   - Validate sequences
   - Record provenance decision (source, length, organism class)
   - Flag sequences that are too short, invalid, or highly repetitive
   - Mark candidates ACTIVE or DISCARDED based on basic quality gates
 
-N1 does NOT:
-  - Call PSORTb (unavailable on Railway, N2 uses Phobius instead)
+Agent 1 does NOT:
+  - Call PSORTb (unavailable on Railway, Agent 2 uses Phobius instead)
   - Call Claude for antigen decisions (non-reproducible, expensive)
-  - Run VaxiJen (that is N2's scope)
+  - Run VaxiJen (that is Agent 2's scope)
 
 Consistent with all other agents: run(candidates) -> candidates
 """
@@ -24,7 +24,7 @@ from typing import List
 from src.models.candidate import CandidateProtein, CandidateStatus, ConfidenceTier
 
 from src.utils.logger import get_logger
-logger = get_logger("tope_deep.agents.N1")  # use the correct agent name
+logger = get_logger("tope_deep.agents.Agent 1")  # use the correct agent name
 
 # Quality gates
 MIN_SEQUENCE_LENGTH = 20    # below this: no meaningful epitope prediction possible
@@ -39,7 +39,7 @@ class DataCuratorAgent:
 
     Records provenance and validates sequences for all candidate proteins.
     Marks candidates DISCARDED if they fail minimum quality gates.
-    All other candidates proceed ACTIVE to N2.
+    All other candidates proceed ACTIVE to Agent 2.
     """
 
     def __init__(self):
@@ -51,7 +51,7 @@ class DataCuratorAgent:
         organism_class: str = "bacteria",
         input_type: str = "unknown",
     ) -> List[CandidateProtein]:
-        logger.info(f"N1: Data Curator {len(candidates)} candidates")
+        logger.info(f"Agent 1: Data Curator {len(candidates)} candidates")
 
         for i, c in enumerate(candidates):
             logger.info(
@@ -66,7 +66,7 @@ class DataCuratorAgent:
                 c.status = CandidateStatus.DISCARDED
                 decision = "discarded"
                 reasoning = (
-                    f"Candidate discarded at N1: {discard_reason}. "
+                    f"Candidate discarded at Agent 1: {discard_reason}. "
                     f"Flags: {', '.join(flags)}. "
                     f"No further processing."
                 )
@@ -80,11 +80,11 @@ class DataCuratorAgent:
                     f"Input type: {input_type}. "
                     f"Organism class inferred: {organism_class}. "
                     + (f"Flags (non-blocking): {', '.join(flags)}. " if flags else "No quality flags. ")
-                    + "Advancing to N2 Antigen Screener."
+                    + "Advancing to Agent 2 Antigen Screener."
                 )
                 if len(c.sequence) > MAX_SEQUENCE_LENGTH:
                     logger.warning(
-                        f"   N1 WARNING: {c.protein_name} is {len(c.sequence)} aa "
+                        f"   Agent 1 WARNING: {c.protein_name} is {len(c.sequence)} aa "
                         f"IEDB calls may be slow or time out."
                     )
 
@@ -101,7 +101,7 @@ class DataCuratorAgent:
 
         active  = sum(1 for c in candidates if c.status == CandidateStatus.ACTIVE)
         discard = sum(1 for c in candidates if c.status == CandidateStatus.DISCARDED)
-        logger.info(f"N1 complete: {active} active, {discard} discarded")
+        logger.info(f"Agent 1 complete: {active} active, {discard} discarded")
         return candidates
 
     # ── VALIDATION ────────────────────────────────────────────────────────────
