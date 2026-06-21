@@ -104,92 +104,92 @@ class PipelineOrchestrator:
         start_total = time.time()
 
         # Data Curator
-        _cb("N1", 0.02, "Recording data provenance...")
+        _cb("Agent 1", 0.02, "Recording data provenance...")
         t = time.time()
         candidates = self.n1.run(candidates, organism_class=organism_class, input_type=input_type)
         timings["n1_curation"] = round(time.time() - t, 2)
-        _cb("N1", 0.05, f"N1 complete: {sum(1 for c in candidates if c.status == CandidateStatus.ACTIVE)} candidates active")
+        _cb("Agent 1", 0.05, f"Agent 1 complete: {sum(1 for c in candidates if c.status == CandidateStatus.ACTIVE)} candidates active")
 
         # Antigen Screener (VaxiJen + Phobius)
-        _cb("N2", 0.06, "Antigen screening: VaxiJen 2.0 + Phobius...")
+        _cb("Agent 2", 0.06, "Antigen screening: VaxiJen 2.0 + Phobius...")
         t = time.time()
         candidates = self._run_n2(candidates, organism_class)
         timings["n2_screening"] = round(time.time() - t, 2)
-        _cb("N2", 0.10, "N2 complete")
+        _cb("Agent 2", 0.10, "Agent 2 complete")
 
         # TCell Predictor
-        _cb("N3", 0.11, "Predicting T-cell epitopes: NetMHCpan 4.1, NetMHCIIpan 4.3...")
+        _cb("Agent 3", 0.11, "Predicting T-cell epitopes: NetMHCpan 4.1, NetMHCIIpan 4.3...")
         t = time.time()
         candidates = self.n3.run(candidates)
         timings["n3_tcell"] = round(time.time() - t, 2)
-        _cb("N3", 0.35, "N3 complete")
+        _cb("Agent 3", 0.35, "Agent 3 complete")
 
         # BCell Predictor
-        _cb("N4", 0.36, "Predicting B-cell epitopes: BepiPred 2.0...")
+        _cb("Agent 4", 0.36, "Predicting B-cell epitopes: BepiPred 2.0...")
         t = time.time()
         candidates = self.n4.run(candidates)
         timings["n4_bcell"] = round(time.time() - t, 2)
-        _cb("N4", 0.50, "N4 complete")
+        _cb("Agent 4", 0.50, "Agent 4 complete")
 
         # Structure Agent
-        _cb("N5", 0.51, "Retrieving 3D structures: AlphaFold DB...")
+        _cb("Agent 5", 0.51, "Retrieving 3D structures: AlphaFold DB...")
         t = time.time()
         candidates = self.n5.run(candidates)
         timings["n5_structure"] = round(time.time() - t, 2)
-        _cb("N5", 0.58, "N5 complete")
+        _cb("Agent 5", 0.58, "Agent 5 complete")
 
         # Safety Filter
         if run_safety:
-            _cb("N6", 0.59, "Safety screening: FAO/WHO, AllerTOP, HemoPI, human homology...")
+            _cb("Agent 6", 0.59, "Safety screening: FAO/WHO, AllerTOP, HemoPI, human homology...")
             t = time.time()
             candidates = self.n6.run(candidates)
             timings["n6_safety"] = round(time.time() - t, 2)
-        _cb("N6", 0.72, "N6 complete" if run_safety else "N6 skipped")
+        _cb("Agent 6", 0.72, "Agent 6 complete" if run_safety else "Agent 6 skipped")
 
         # Coverage Agent
         if run_coverage:
-            _cb("N7", 0.73, "Calculating HLA population coverage: IEDB / AFND 2020...")
+            _cb("Agent 7", 0.73, "Calculating HLA population coverage: IEDB / AFND 2020...")
             t = time.time()
             candidates = self.n7.run(candidates)
             timings["n7_coverage"] = round(time.time() - t, 2)
-        _cb("N7", 0.82, "N7 complete" if run_coverage else "N7 skipped")
+        _cb("Agent 7", 0.82, "Agent 7 complete" if run_coverage else "Agent 7 skipped")
 
         # Construct Designer
-        _cb("N8", 0.83, "Assembling multi-epitope construct: ProtParam, adjuvant, linkers...")
+        _cb("Agent 8", 0.83, "Assembling multi-epitope construct: ProtParam, adjuvant, linkers...")
         t = time.time()
         candidates, construct_report = self.n8.run(candidates)
         timings["n8_construct"] = round(time.time() - t, 2)
-        _cb("N8", 0.88, "N8 complete")
+        _cb("Agent 8", 0.88, "Agent 8 complete")
 
         # Literature Agent
         if run_literature:
-            _cb("N9", 0.89, "Searching published literature: PubMed, Qdrant...")
+            _cb("Agent 9", 0.89, "Searching published literature: PubMed, Qdrant...")
             t = time.time()
             try:
                 candidates = self.n9.run(candidates, run_id=run_id)
             except Exception as e:
-                logger.warning(f"N9 failed (non-blocking): {e}")
+                logger.warning(f"Agent 9 failed (non-blocking): {e}")
             timings["n9_literature"] = round(time.time() - t, 2)
-        _cb("N9", 0.94, "N9 complete" if run_literature else "N9 skipped")
+        _cb("Agent 9", 0.94, "Agent 9 complete" if run_literature else "Agent 9 skipped")
 
         # Experiment Planner
         if run_experiment:
-            _cb("N10", 0.95, "Generating wet-lab validation roadmap: Claude API...")
+            _cb("Agent 10", 0.95, "Generating wet-lab validation roadmap: Claude API...")
             t = time.time()
             try:
                 candidates = self.n10.run(candidates, lab_constraints=lab_constraints)
             except Exception as e:
-                logger.warning(f"N10 failed (non-blocking): {e}")
+                logger.warning(f"Agent 10 failed (non-blocking): {e}")
             timings["n10_experiment"] = round(time.time() - t, 2)
-        _cb("N10", 0.99, "N10 complete" if run_experiment else "N10 skipped")
+        _cb("Agent 10", 0.99, "Agent 10 complete" if run_experiment else "Agent 10 skipped")
 
         total = round(time.time() - start_total, 1)
         timings["total_seconds"] = total
 
         logger.info(
             f"Pipeline complete: run={run_id} total={total}s "
-            f"N3={timings['n3_tcell']}s N4={timings['n4_bcell']}s "
-            f"N6={timings['n6_safety']}s N9={timings['n9_literature']}s"
+            f"Agent 3={timings['n3_tcell']}s Agent 4={timings['n4_bcell']}s "
+            f"Agent 6={timings['n6_safety']}s Agent 9={timings['n9_literature']}s"
         )
 
         return {
@@ -210,7 +210,7 @@ class PipelineOrchestrator:
             from src.tools.vaxijen_client import vaxijen
             from src.tools.phobius_client import phobius
         except ImportError as e:
-            logger.warning(f"N2 tools unavailable: {e}")
+            logger.warning(f"Agent 2 tools unavailable: {e}")
             return candidates
 
         active = [c for c in candidates if c.status == CandidateStatus.ACTIVE]
@@ -249,15 +249,15 @@ class PipelineOrchestrator:
                     localization_tool="Phobius_2.0",
                 )
                 logger.info(
-                    f"   N2: {c.protein_name} VaxiJen={c.vaxijen_score:.3f} "
+                    f"   Agent 2: {c.protein_name} VaxiJen={c.vaxijen_score:.3f} "
                     f"[{method}] TM={tm} loc={c.psortb_localization}"
                 )
             except Exception as e:
-                logger.warning(f"   N2 failed for {c.protein_name} (continuing): {e}")
+                logger.warning(f"   Agent 2 failed for {c.protein_name} (continuing): {e}")
                 c.add_decision(
                     stage="antigen_screening",
                     decision="screening_failed",
-                    reasoning=f"N2 antigen screening failed: {e}. Candidate proceeds unscored.",
+                    reasoning=f"Agent 2 antigen screening failed: {e}. Candidate proceeds unscored.",
                 )
         return candidates
 
