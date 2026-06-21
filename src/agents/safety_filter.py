@@ -15,7 +15,7 @@ Secondary (attempted if primary passes, non-blocking):
   External AllerTOP server - cross-check if available (never blocks pipeline)
 
 This architecture means:
-  - N6 runs at 10/10 reliability (local tools always available)
+  - Agent 6 runs at 10/10 reliability (local tools always available)
   - External tools enhance results when available but never block them
   - All results are reproducible regardless of network state
   - Database versions are recorded in every audit trail entry
@@ -41,7 +41,7 @@ from src.tools.safety_local import (
 )
 
 from src.utils.logger import get_logger
-logger = get_logger("tope_deep.agents.N6")  # use the correct agent name
+logger = get_logger("tope_deep.agents.Agent 6")  # use the correct agent name
 
 VERDICT_PASS     = "pass"
 VERDICT_FAIL     = "fail"
@@ -65,7 +65,7 @@ class _CircuitBreaker:
         self.failures += 1
         if self.failures >= _CB_THRESHOLD and not self.open:
             logger.info(
-                f"N6: {self.name} external enhancement unavailable "
+                f"Agent 6: {self.name} external enhancement unavailable "
                 f"(circuit breaker open after {self.failures} failures). "
                 f"Local implementation continues unaffected."
             )
@@ -95,7 +95,7 @@ class SafetyFilterAgent:
         # Log database status at startup
         db_status = check_database_availability()
         logger.info(
-            f"N6 database status: "
+            f"Agent 6 database status: "
             f"AllergenOnline={'OK' if db_status['allergenonline'] else 'MISSING'} "
             f"v{db_status['allergenonline_version']}, "
             f"HumanSwissProt={'OK' if db_status['human_swissprot'] else 'MISSING'} "
@@ -103,7 +103,7 @@ class SafetyFilterAgent:
         )
         if not db_status["allergenonline"]:
             logger.warning(
-                "N6: AllergenOnline database missing. "
+                "Agent 6: AllergenOnline database missing. "
                 "WHO allergenicity screen will use AllerTOP only. "
                 "Run: python data/safety_db/download_databases.py"
             )
@@ -111,7 +111,7 @@ class SafetyFilterAgent:
     # ── PUBLIC ────────────────────────────────────────────────────────────────
 
     def run(self, candidates: List[CandidateProtein]) -> List[CandidateProtein]:
-        logger.info("N6: Starting safety screening (local implementation v3.0)")
+        logger.info("Agent 6: Starting safety screening (local implementation v3.0)")
         active = [c for c in candidates if c.status.value == "active"]
         logger.info(f"   {len(active)} candidates")
 
@@ -221,7 +221,7 @@ class SafetyFilterAgent:
                 f"{fail_count} failed | {unscored_count} unscored"
             )
 
-        logger.info("N6: Safety screening complete")
+        logger.info("Agent 6: Safety screening complete")
         return candidates
 
     # ── SINGLE EPITOPE ────────────────────────────────────────────────────────
@@ -276,7 +276,7 @@ class SafetyFilterAgent:
                     "DATABASE": "refseq_protein",
                     "QUERY": sequence,
                     "ENTREZ_QUERY": "Homo sapiens[Organism]",
-                    "FORMAT_TYPE": "JSON2", "HITLIST_SIZE": "5",
+                    "FORMAT_TYPE": "JSOAgent 2", "HITLIST_SIZE": "5",
                     "EXPECT": "1", "WORD_SIZE": "3",
                     "api_key": ncbi_key,
                 },
@@ -292,7 +292,7 @@ class SafetyFilterAgent:
                 time.sleep(5)
                 result = self.session.get(
                     "https://blast.ncbi.nlm.nih.gov/blast/Blast.cgi",
-                    params={"CMD": "Get", "RID": rid, "FORMAT_TYPE": "JSON2", "api_key": ncbi_key},
+                    params={"CMD": "Get", "RID": rid, "FORMAT_TYPE": "JSOAgent 2", "api_key": ncbi_key},
                     timeout=30,
                 )
                 if "Status=WAITING" in result.text:
