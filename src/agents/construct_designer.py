@@ -33,7 +33,7 @@ from src.models.candidate import (
 )
 
 from src.utils.logger import get_logger
-logger = get_logger("tope_deep.agents.N8")  # use the correct agent name
+logger = get_logger("tope_deep.agents.Agent 8")  # use the correct agent name
 
 # ── Adjuvant registry ─────────────────────────────────────────────────────────
 # Add new adjuvants here. Each entry is independently citable and defensible.
@@ -108,7 +108,7 @@ class ConstructDesignerAgent:
         pipeline_run: Optional[PipelineRun] = None,
     ) -> Tuple[List[CandidateProtein], Optional[Dict[str, Any]]]:
         active = [c for c in candidates if c.status.value == "active"]
-        logger.info(f"N8: {len(active)} candidates | adjuvant={self.adjuvant_key}")
+        logger.info(f"Agent 8: {len(active)} candidates | adjuvant={self.adjuvant_key}")
 
         ctl_epitopes   = self._select_ctl(active)
         htl_epitopes   = self._select_htl(active)
@@ -118,8 +118,8 @@ class ConstructDesignerAgent:
 
         if total < MIN_EPITOPES_REQUIRED:
             logger.warning(
-                "N8: No eligible epitopes (safety-passed + high-confidence). "
-                "All epitopes may be unscored (N6 tools unavailable) or failed safety. "
+                "Agent 8: No eligible epitopes (safety-passed + high-confidence). "
+                "All epitopes may be unscored (Agent 6 tools unavailable) or failed safety. "
                 "Construct not assembled."
             )
             for candidate in active:
@@ -128,9 +128,9 @@ class ConstructDesignerAgent:
                     decision="construct_skipped",
                     reasoning=(
                         "No safety-passed, confidence-scored epitopes available. "
-                        "This occurs when N6 safety tools are unavailable (all unscored) "
+                        "This occurs when Agent 6 safety tools are unavailable (all unscored) "
                         "or all epitopes failed safety screening. "
-                        "Review N6 safety screening results."
+                        "Review Agent 6 safety screening results."
                     ),
                 )
             return candidates, None
@@ -199,7 +199,7 @@ class ConstructDesignerAgent:
             )
 
         logger.info(
-            f"N8 complete: {len(construct_sequence)} aa | "
+            f"Agent 8 complete: {len(construct_sequence)} aa | "
             f"MW={properties.get('molecular_weight_da')} Da | "
             f"pI={properties.get('isoelectric_point')} | "
             f"stable={properties.get('is_stable')}"
