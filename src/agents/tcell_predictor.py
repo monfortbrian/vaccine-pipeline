@@ -61,7 +61,7 @@ import requests
 from typing import List, Dict, Any, Optional, Set
 from src.models.candidate import CandidateProtein, EpitopeResult, EpitopeType, ConfidenceTier
 
-logger = logging.getLogger("tope_deep.agents.N3")
+logger = logging.getLogger("tope_deep.agents.Agent 3")
 
 # ── Allele registry ───────────────────────────────────────────────────────────
 
@@ -123,7 +123,7 @@ class TCellPredictorAgent:
 
     def run(self, candidates: List[CandidateProtein]) -> List[CandidateProtein]:
         logger.info(
-            "N3: TCell Predictor NetMHCpan 4.1 + NetMHCIIpan 4.3 + MHCflurry fallback"
+            "Agent 3: TCell Predictor NetMHCpan 4.1 + NetMHCIIpan 4.3 + MHCflurry fallback"
         )
         if self._run_stability:
             logger.info("   Stability scoring: enabled (NetMHCstabpan 1.0)")
@@ -207,11 +207,11 @@ class TCellPredictorAgent:
                 )
 
             except Exception as e:
-                logger.error(f"      N3 failed for {candidate.protein_name}: {e}")
+                logger.error(f"      Agent 3 failed for {candidate.protein_name}: {e}")
                 candidate.add_decision(
                     stage=self.stage_name,
                     decision="prediction_failed",
-                    reasoning=f"N3 exception: {str(e)}. No epitopes predicted.",
+                    reasoning=f"Agent 3 exception: {str(e)}. No epitopes predicted.",
                 )
 
         return candidates
