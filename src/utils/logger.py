@@ -6,7 +6,7 @@ Import and use instead of logging.getLogger() directly.
 
 Usage:
     from src.utils.logger import get_logger
-    logger = get_logger("tope_deep.agents.N3")
+    logger = get_logger("tope_deep.agents.Agent 3")
     logger.info("TCell Predictor started")
     logger.success("20 CTL epitopes predicted")   # custom level
     logger.warning("IEDB unavailable, MHCflurry fallback active")
@@ -93,9 +93,9 @@ def get_logger(name: str, level: int = logging.INFO) -> _TOPELogger:
     Convention:
         tope_deep.api
         tope_deep.orchestrator
-        tope_deep.agents.N1   (Data Curator)
-        tope_deep.agents.N2   (Antigen Screener)
-        tope_deep.agents.N3   (TCell Predictor)
+        tope_deep.agents.Agent 1   (Data Curator)
+        tope_deep.agents.Agent 2   (Antigen Screener)
+        tope_deep.agents.Agent 3   (TCell Predictor)
         ... etc
         tope_deep.validation
         tope_deep.storage

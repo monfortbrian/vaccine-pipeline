@@ -1,18 +1,18 @@
 """
 CANDIDATE VALIDATOR
 
-Runs before N1. Validates the raw input (pathogen name, UniProt ID, or sequence)
+Runs before Agent 1. Validates the raw input (pathogen name, UniProt ID, or sequence)
 and produces human-readable errors before any agent touches it.
 
 This is the "human-in-the-loop" gate:
   - Wrong UniProt ID    : clear error, no agents run
   - Pathogen not found : clear error, suggest corrections
   - Sequence too short  : clear error with minimum requirement
-  - All candidates deprioritised after N2 : pipeline halts with summary, not silent failure
+  - All candidates deprioritised after Agent 2 : pipeline halts with summary, not silent failure
 
 The guard also prevents resource waste:
   - If UniProt ID returns a human protein (Homo sapiens) : warn, ask to confirm
-  - If sequence has >50% similarity to human proteome : flag before N3 runs
+  - If sequence has >50% similarity to human proteome : flag before Agent 3 runs
   - If pathogen name matches 0 UniProt reviewed entries : halt with suggestions
 
 This is NOT about restricting what scientists can run.
@@ -80,7 +80,7 @@ def validate_uniprot_id(uid: str) -> ValidationResult:
 
         return ValidationResult(True, warning=warning)
     except requests.Timeout:
-        # Cannot reach UniProt, allow pipeline to continue, N1 will catch it
+        # Cannot reach UniProt, allow pipeline to continue, Agent 1 will catch it
         return ValidationResult(True, warning="UniProt connectivity check timed out, proceeding")
     except Exception as e:
         return ValidationResult(True, warning=f"UniProt pre-check failed: {e}, proceeding")
