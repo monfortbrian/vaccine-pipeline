@@ -9,7 +9,7 @@ Tools:
 
 Early exit gate: if VaxiJen score < 0.3 AND sequence is cytoplasmic with
 no signal peptide, the candidate is deprioritised with a clear audit record.
-All other candidates proceed to N3 regardless of score; the score is
+All other candidates proceed to Agent 3 regardless of score; the score is
 recorded for scientific context, not used as a hard filter by default.
 
 References:
@@ -22,7 +22,7 @@ from typing import List
 from src.models.candidate import CandidateProtein, CandidateStatus
 
 from src.utils.logger import get_logger
-logger = get_logger("tope_deep.agents.N2")  # use the correct agent name
+logger = get_logger("tope_deep.agents.Agent 2")  # use the correct agent name
 
 VAXIJEN_LOW_THRESHOLD = 0.3   # below this + cytoplasmic = deprioritise
 
@@ -60,7 +60,7 @@ class AntigenScreenerAgent:
         candidates: List[CandidateProtein],
         organism_class: str = "bacteria",
     ) -> List[CandidateProtein]:
-        logger.info("N2: Antigen Screener - VaxiJen 2.0 ACC + Phobius")
+        logger.info("Agent 2: Antigen Screener - VaxiJen 2.0 ACC + Phobius")
         active = [c for c in candidates if c.status == CandidateStatus.ACTIVE]
 
         for i, c in enumerate(active):
@@ -116,7 +116,7 @@ class AntigenScreenerAgent:
                     f"VaxiJen={vaxijen_score:.3f} [organism={organism_class}, method={vaxijen_method}]. "
                     f"Phobius: TM_helices={tm_helices}, localization={localization}. "
                     + (f"Deprioritised: VaxiJen score below {VAXIJEN_LOW_THRESHOLD} with cytoplasmic localisation. "
-                       f"Candidate will not proceed to N3. " if deprioritised else "Advancing to N3. ")
+                       f"Candidate will not proceed to Agent 3. " if deprioritised else "Advancing to Agent 3. ")
                     + (f"Tool failures (non-blocking): {', '.join(failed_tools)}. " if failed_tools else "")
                     + "Phobius used as PSORTb proxy (PSORTb requires Docker-in-Docker, unavailable on Railway)."
                 ),
@@ -135,7 +135,7 @@ class AntigenScreenerAgent:
             )
 
         active_count = sum(1 for c in candidates if c.status == CandidateStatus.ACTIVE)
-        logger.info(f"N2 complete: {active_count} active candidates proceed to N3")
+        logger.info(f"Agent 2 complete: {active_count} active candidates proceed to Agent 3")
         return candidates
 
 

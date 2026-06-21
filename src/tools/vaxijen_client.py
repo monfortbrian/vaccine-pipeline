@@ -155,7 +155,7 @@ class VaxiJenClient:
         """
         Returns VaxiJen antigenicity score (0.0–1.0).
         Tries real server first. Falls back to improved local ACC.
-        Method used is always recorded by caller (main.py N2 block).
+        Method used is always recorded by caller (main.py Agent 2 block).
         """
         if not self._server_failed:
             score = self._call_vaxijen(sequence, organism_type)
