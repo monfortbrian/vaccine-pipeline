@@ -15,7 +15,7 @@ from src.models.candidate import CandidateProtein, EpitopeResult, EpitopeType, C
 logger = logging.getLogger("tope_deep.agents.Agent 4")
 
 BEPIPRED_THRESHOLD = 0.5
-IEDB_BCELL_URL     = "http://tools-cluster-interface.iedb.org/tools_api/bcell/"
+IEDB_BCELL_URL = "https://tools-cluster-interface.iedb.org/tools_api/bcell/"
 
 
 def _call_iedb_bcell_client(client, sequence: str) -> Optional[List[Dict]]:
@@ -69,6 +69,7 @@ def _call_iedb_bcell_http(sequence: str) -> List[Dict]:
                 "threshold":     BEPIPRED_THRESHOLD,
             },
             timeout=30.0,
+            follow_redirects=True,
         )
         resp.raise_for_status()
 
