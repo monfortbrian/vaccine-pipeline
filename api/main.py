@@ -138,13 +138,13 @@ class RunRequest(BaseModel):
 
 
 class RunStatus(BaseModel):
-    run_id:        str
-    status:        str
-    current_agent: Optional[str] = None
-    progress:      float         = 0.0
-    message:       Optional[str] = None
-    started_at:    Optional[str] = None
-    completed_at:  Optional[str] = None
+    run_id:       str
+    status:       str
+    current_node: Optional[str] = None   # matches frontend ps.current_node
+    progress:     float         = 0.0
+    message:      Optional[str] = None
+    started_at:   Optional[str] = None
+    completed_at: Optional[str] = None
 
 
 class EpitopeOut(BaseModel):
@@ -464,14 +464,14 @@ def _serialize_candidate(c) -> CandidateOut:
 # ── Pipeline runner (runs in thread pool) ─────────────────────────────────────
 
 def _execute_pipeline(run_id: str, candidates: list, config: Dict):
-   
+
     from src.orchestrator import PipelineOrchestrator
 
     def _progress(agent: str, pct: float, msg: str):
         _patch_run(run_id, {
-            "current_agent": agent,
-            "progress":      pct,
-            "message":       msg,
+            "current_node": agent,
+            "progress":     pct,
+            "message":      msg,
         })
 
     # Get user_id BEFORE pipeline runs (Redis has it at this point)
@@ -490,7 +490,7 @@ def _execute_pipeline(run_id: str, candidates: list, config: Dict):
         _patch_run(run_id, {
             "status":                "completed",
             "progress":              1.0,
-            "current_agent":         None,
+            "current_node":         None,
             "message":               "Complete",
             "completed_at":          datetime.now().isoformat(),
             "timing":                result.get("timing", {}),
@@ -720,7 +720,7 @@ async def start_run(
         "run_id":        run_id,
         "user_id":       user.sub,
         "status":        "pending",
-        "current_agent": None,
+        "current_node": None,
         "progress":      0.0,
         "message":       f"Queued {len(candidates)} protein(s) [{organism}]",
         "input_type":    body.input_type,
@@ -753,7 +753,7 @@ async def get_status(run_id: str, user: UserClaims = Depends(require_user)):
     return RunStatus(
         run_id=run_id,
         status=run["status"],
-        current_agent=run.get("current_agent"),
+        current_node=run.get("current_node"),
         progress=run.get("progress", 0),
         message=run.get("message"),
         started_at=run.get("started_at"),
@@ -825,7 +825,7 @@ async def list_runs(
         count_res = (
             db.client.table("runs")
             .select("id", count="exact")
-            .or_(f"user_id.eq.{user.sub},user_id.is.null")
+            .eq("user_id", user.sub)
             .execute()
         )
         total = count_res.count or 0
@@ -833,7 +833,7 @@ async def list_runs(
         db_runs = (
             db.client.table("runs")
             .select("*")
-            .or_(f"user_id.eq.{user.sub},user_id.is.null")
+            .eq("user_id", user.sub)
             .order("created_at", desc=True)
             .range(offset, offset + per_page - 1)
             .execute()
@@ -914,7 +914,7 @@ async def ws_pipeline(
                 await websocket.send_json({
                     "run_id":        run_id,
                     "status":        run["status"],
-                    "current_agent": run.get("current_agent"),
+                    "current_node":  run.get("current_node"),
                     "progress":      progress,
                     "message":       run.get("message"),
                 })
