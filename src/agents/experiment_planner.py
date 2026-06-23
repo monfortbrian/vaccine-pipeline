@@ -16,7 +16,7 @@ from typing import List, Dict, Any, Optional
 from src.models.candidate import CandidateProtein, ConfidenceTier
 from src.utils.logger import get_logger
 
-logger = get_logger("tope_deep.agents.Agent 10")
+logger = get_logger("tope_deep.agents.N10")
 
 
 # ── Template fallback (always returns non-None) ───────────────────────────────
