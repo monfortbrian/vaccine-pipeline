@@ -165,6 +165,7 @@ class SafetyFilterAgent:
                 ep.tool_outputs["safety_verdict"] = verdict
                 ep.tool_outputs["safety_flags"] = flags
                 ep.tool_outputs["safety_method_used"] = method_used
+                ep.tool_outputs["homology_safe"] = method_used.get("homology_safe", None)
 
                 if verdict == VERDICT_PASS:
                     ep.allergenicity_safe = True
@@ -248,6 +249,9 @@ class SafetyFilterAgent:
             "hemopi_score": local_result["hemopi"].get("svm_score"),
             "human_8mer_matches": local_result["human_homology"].get("overlap_count", 0),
         }
+        # Expose homology result as a top-level tool_output field for frontend
+        human_overlap = local_result["human_homology"].get("overlap_count", 0)
+        method_used["homology_safe"] = human_overlap == 0
 
         # Optional: BLAST enhancement (non-blocking, adds confidence if available)
         if not self._cb_blast.is_open() and verdict != VERDICT_FAIL:
