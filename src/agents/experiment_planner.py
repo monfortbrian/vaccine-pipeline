@@ -112,7 +112,7 @@ def _template_plan(candidate: CandidateProtein, context: Dict) -> Dict:
             f"2. Coat PVDF plates (Millipore MSIP) with anti-IFN-γ antibody overnight at 4°C.\n"
             f"3. Rest PBMCs 4h at 37°C, then plate 2×10⁵/well.\n"
             f"4. Stimulate with peptide (10 μg/mL) + brefeldin A for 18h.\n"
-            f"5. Detect with biotinylated anti-IFN-γ → streptavidin-ALP → BCIP substrate.\n"
+            f"5. Detect with biotinylated anti-IFN-γ, streptavidin-ALP, BCIP substrate.\n"
             f"6. Count spots: ≥2× background AND ≥50 SFU/10⁶ = positive response."
         ),
         "immunisation_schedule": (
