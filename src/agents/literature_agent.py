@@ -12,7 +12,6 @@ Tools:
 import os
 import re
 import time
-import logging
 import hashlib
 import requests
 from typing import List, Dict, Any, Optional
@@ -20,7 +19,7 @@ from typing import List, Dict, Any, Optional
 from src.models.candidate import CandidateProtein, ConfidenceTier
 from src.utils.logger import get_logger
 
-logger = get_logger("tope_deep.agents.Agent 9")
+logger = get_logger("tope_deep.agents.N9")
 
 PUBMED_API_KEY = os.getenv("NCBI_API_KEY", "")
 PUBMED_BASE    = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
@@ -41,13 +40,11 @@ _VACCINE_TERMS = (
     '"antibody"[Title/Abstract]'
 )
 
-_UNIPROT_ID_RE = re.compile(r'^[A-Z][0-9][A-Z0-9]{3}[0-9]$|^[OPQ][0-9][A-Z0-9]{3}[0-9]$')
-
 
 def _clean_protein_name(name: str) -> str:
     """
     Strip UniProt parenthetical accession from protein name before PubMed query.
-    "Mycolipanoate synthase (A0A089QRB9)" to "Mycolipanoate synthase"
+    "Mycolipanoate synthase (A0A089QRB9)" → "Mycolipanoate synthase"
     PubMed does not index UniProt accessions in freetext including them
     causes zero results.
     """
@@ -70,7 +67,6 @@ def _build_pubmed_query(candidate) -> str:
     protein_name = candidate.protein_name or ""
     protein_id   = candidate.protein_id   or ""
     source       = getattr(candidate, 'source', 'uniprot')
-    decisions    = getattr(candidate, 'decisions', [])
 
     clean_name  = _clean_protein_name(protein_name)
     has_uniprot = _is_real_uniprot_id(protein_id)
@@ -115,9 +111,14 @@ def _build_fallback_query(candidate) -> str:
     elif has_uniprot:
         return f'"{protein_id}"[Title/Abstract]'
     elif clean_name and clean_name.lower() not in ("custom protein", "unknown"):
-        return f'"{clean_name}"[Title/Abstract]'
-    else:
-        return ""
+        if len(clean_name.split()) <= 3:
+            return f'"{clean_name}"[Title/Abstract]'
+        # Long names: first meaningful word + accession if available
+        first_word = clean_name.split()[0]
+        if has_uniprot:
+            return f'("{first_word}"[Title/Abstract] OR "{protein_id}"[Title/Abstract])'
+        return f'"{first_word}"[Title/Abstract]'
+    return ""
 
 
 # ── PubMed fetch ──────────────────────────────────────────────────────────────
@@ -158,8 +159,9 @@ def _fetch_pubmed_abstracts(query: str, max_results: int = MAX_ABSTRACTS) -> Lis
         fetch_resp.raise_for_status()
 
         import xml.etree.ElementTree as ET
-        root = ET.fromstring(fetch_resp.content)
+        root     = ET.fromstring(fetch_resp.content)
         articles = []
+
         for article in root.findall(".//PubmedArticle"):
             pmid_el      = article.find(".//PMID")
             title_el     = article.find(".//ArticleTitle")
@@ -167,16 +169,21 @@ def _fetch_pubmed_abstracts(query: str, max_results: int = MAX_ABSTRACTS) -> Lis
             year_el      = article.find(".//PubDate/Year")
             journal_el   = article.find(".//Journal/Title")
 
-            pmid     = pmid_el.text     if pmid_el     is not None else ""
-            title    = title_el.text    if title_el    is not None else ""
+            # FIX: guard .text on every element can be None even when element exists
+            pmid     = (pmid_el.text    or "").strip() if pmid_el    is not None else ""
+            title    = (title_el.text   or "").strip() if title_el   is not None else ""
             abstract = " ".join((el.text or "") for el in abstract_els).strip()
-            year     = year_el.text     if year_el     is not None else ""
-            journal  = journal_el.text  if journal_el  is not None else ""
+            year     = (year_el.text    or "").strip() if year_el    is not None else ""
+            journal  = (journal_el.text or "").strip() if journal_el is not None else ""
 
-            if abstract:
+            # Only keep articles with both a non-empty abstract and a valid PMID
+            if abstract and pmid:
                 articles.append({
-                    "pmid": pmid, "title": title,
-                    "abstract": abstract, "journal": journal, "year": year,
+                    "pmid":     pmid,
+                    "title":    title,
+                    "abstract": abstract,
+                    "journal":  journal,
+                    "year":     year,
                 })
 
         logger.info(f"Agent 9: PubMed returned {len(articles)} abstracts for: {query[:60]}")
@@ -198,16 +205,7 @@ def _get_qdrant_client():
         logger.info("Agent 9: Qdrant in-memory")
         return QdrantClient(":memory:")
     except ImportError:
-        logger.warning("Agent 9: qdrant-client not installed, falling back to ChromaDB")
-        return None
-
-
-def _get_chroma_client():
-    try:
-        import chromadb
-        return chromadb.Client()
-    except ImportError:
-        logger.error("Agent 9: Neither qdrant-client nor chromadb installed")
+        logger.warning("Agent 9: qdrant-client not installed")
         return None
 
 
@@ -247,21 +245,6 @@ def _index_abstracts_qdrant(client, collection_name: str, abstracts: List[Dict],
         return False
 
 
-def _search_evidence(client, collection_name: str, query_text: str, embedder, top_k: int = 3) -> List[Dict]:
-    try:
-        query_vector = embedder.encode([query_text], show_progress_bar=False)[0].tolist()
-        results = client.search(
-            collection_name=collection_name,
-            query_vector=query_vector,
-            limit=top_k,
-            score_threshold=0.3,
-        )
-        return [r.payload for r in results]
-    except Exception as e:
-        logger.warning(f"Agent 9: Qdrant search failed: {e}")
-        return []
-
-
 def _detect_failure_signals(abstracts: List[Dict]) -> List[str]:
     failure_keywords = {
         "immune evasion":     "immune evasion reported in literature",
@@ -283,7 +266,11 @@ def _detect_failure_signals(abstracts: List[Dict]) -> List[str]:
     return found
 
 
-def _synthesize_with_claude(protein_name: str, abstracts: List[Dict], failure_signals: List[str]) -> Optional[str]:
+def _synthesize_with_claude(
+    protein_name: str,
+    abstracts: List[Dict],
+    failure_signals: List[str],
+) -> Optional[str]:
     api_key = os.getenv("ANTHROPIC_API_KEY", "")
     if not api_key or not abstracts:
         return None
@@ -291,21 +278,23 @@ def _synthesize_with_claude(protein_name: str, abstracts: List[Dict], failure_si
         abstract_text = "\n\n".join([
             f"[PMID {a['pmid']}] {a['title']}\n{a['abstract'][:400]}"
             for a in abstracts[:5]
+            if a.get('pmid') and a.get('abstract')
         ])
+        if not abstract_text:
+            return None
+
         failure_text = (
             f"Known failure signals: {', '.join(failure_signals)}"
             if failure_signals else "No failure signals detected."
         )
-        prompt = f"""You are a computational immunologist reviewing published literature
-for early vaccine discovery. Summarize the evidence below for {protein_name}
-in 2-3 sentences. State: (1) what prior evidence exists for this protein as a vaccine target,
-(2) any known concerns or failure signals, (3) your assessment of evidence quality.
-Be precise and scientific. No hedging language.
-
-{failure_text}
-
-Literature:
-{abstract_text}"""
+        prompt = (
+            f"You are a computational immunologist reviewing published literature "
+            f"for early vaccine discovery. Summarize the evidence below for {protein_name} "
+            f"in 2-3 sentences. State: (1) what prior evidence exists for this protein as a vaccine target, "
+            f"(2) any known concerns or failure signals, (3) your assessment of evidence quality. "
+            f"Be precise and scientific. No hedging language.\n\n"
+            f"{failure_text}\n\nLiterature:\n{abstract_text}"
+        )
 
         resp = requests.post(
             "https://api.anthropic.com/v1/messages",
@@ -315,14 +304,17 @@ Literature:
                 "content-type":      "application/json",
             },
             json={
-                "model":    "claude-sonnet-4-6",
+                "model":      "claude-sonnet-4-6",
                 "max_tokens": 300,
-                "messages": [{"role": "user", "content": prompt}],
+                "messages":   [{"role": "user", "content": prompt}],
             },
             timeout=20,
         )
         resp.raise_for_status()
-        return resp.json()["content"][0]["text"].strip()
+        content = resp.json().get("content", [])
+        if content and content[0].get("type") == "text":
+            return content[0]["text"].strip()
+        return None
     except Exception as e:
         logger.warning(f"Agent 9: Claude synthesis failed: {e}")
         return None
@@ -335,14 +327,10 @@ class LiteratureAgent:
         self.stage_name  = "literature_search"
         self._qdrant     = None
         self._embedder   = None
-        self._use_qdrant = True
 
     def _init_clients(self):
         if self._qdrant is None:
             self._qdrant = _get_qdrant_client()
-            if self._qdrant is None:
-                self._qdrant     = _get_chroma_client()
-                self._use_qdrant = False
         if self._embedder is None:
             self._embedder = _get_embedder()
 
@@ -357,7 +345,6 @@ class LiteratureAgent:
             logger.info(f"   [{i+1}/{len(active)}] {candidate.protein_name}")
             start = time.time()
 
-            # FIX: define clean_name BEFORE it is used anywhere in this loop
             clean_name = _clean_protein_name(candidate.protein_name or "")
 
             # ── PRIMARY QUERY ────────────────────────────────────────────────
@@ -365,34 +352,34 @@ class LiteratureAgent:
             logger.info(f"      Query: {primary_query[:120]}")
             abstracts = _fetch_pubmed_abstracts(primary_query)
 
-            # ── FALLBACK QUERY (if 0 results) ─────────────────────────────
+            # ── FALLBACK QUERY ────────────────────────────────────────────────
             if not abstracts:
                 fallback_query = _build_fallback_query(candidate)
                 if fallback_query:
                     logger.info(f"      Fallback query: {fallback_query[:120]}")
                     abstracts = _fetch_pubmed_abstracts(fallback_query, max_results=10)
                 else:
-                    logger.info("      No fallback query available (user sequence with no name)")
+                    logger.info("      No fallback query available")
 
-            # ── EPITOPE-LEVEL QUERIES ─────────────────────────────────────
+            # ── EPITOPE-LEVEL QUERIES ─────────────────────────────────────────
             high_conf_epitopes = [
-                ep for ep in candidate.ctl_epitopes
+                ep for ep in (candidate.ctl_epitopes or [])
                 if ep.confidence_tier == ConfidenceTier.HIGH
             ][:3]
 
-            epitope_abstracts = []
+            epitope_abstracts: List[Dict] = []
             for ep in high_conf_epitopes:
                 ep_query = f'"{ep.sequence}"[Title/Abstract] AND "T cell"[Title/Abstract]'
                 ep_abs   = _fetch_pubmed_abstracts(ep_query, max_results=5)
                 epitope_abstracts.extend(ep_abs)
 
-            # ── DEDUPLICATE ───────────────────────────────────────────────
-            all_abstracts    = abstracts + epitope_abstracts
-            seen_pmids       = set()
-            unique_abstracts = []
-            for a in all_abstracts:
-                if a["pmid"] not in seen_pmids:
-                    seen_pmids.add(a["pmid"])
+            # ── DEDUPLICATE ───────────────────────────────────────────────────
+            seen_pmids: set = set()
+            unique_abstracts: List[Dict] = []
+            for a in abstracts + epitope_abstracts:
+                pmid = a.get("pmid", "")
+                if pmid and pmid not in seen_pmids:
+                    seen_pmids.add(pmid)
                     unique_abstracts.append(a)
 
             logger.info(f"      {len(unique_abstracts)} unique abstracts")
@@ -404,17 +391,16 @@ class LiteratureAgent:
                 for a in unique_abstracts
             )
 
-            # ── INDEX IN QDRANT ───────────────────────────────────────────
-            collection_name = _build_collection_name(run_id, candidate.protein_id)
-            if self._qdrant and self._embedder and unique_abstracts and self._use_qdrant:
+            # ── INDEX IN QDRANT ───────────────────────────────────────────────
+            if self._qdrant and self._embedder and unique_abstracts:
+                collection_name = _build_collection_name(run_id, candidate.protein_id or "unknown")
                 indexed = _index_abstracts_qdrant(
                     self._qdrant, collection_name, unique_abstracts, self._embedder
                 )
                 if indexed:
                     logger.info(f"      Indexed {len(unique_abstracts)} abstracts in Qdrant")
 
-            # ── CLAUDE SYNTHESIS ──────────────────────────────────────────
-            # FIX: clean_name is now defined above, no longer used before assignment
+            # ── CLAUDE SYNTHESIS ──────────────────────────────────────────────
             literature_summary = _synthesize_with_claude(
                 clean_name,
                 unique_abstracts,
@@ -423,17 +409,23 @@ class LiteratureAgent:
 
             elapsed = round(time.time() - start, 1)
 
-            reasoning_parts = [
+            # Build reasoning all parts guaranteed to be str, no None
+            reasoning_parts: List[str] = [
                 f"PubMed search for '{clean_name}' returned {len(unique_abstracts)} abstracts.",
                 f"Prior experimental validation: {prior_validated}.",
             ]
             if failure_signals:
                 reasoning_parts.append(f"Failure signals: {'; '.join(failure_signals)}.")
             if unique_abstracts:
-                pmid_list = ', '.join(a['pmid'] for a in unique_abstracts[:5])
-                reasoning_parts.append(f"Evidence PMIDs: {pmid_list}.")
+                # FIX: filter out any abstract with empty/None pmid before joining
+                valid_pmids = [
+                    a["pmid"] for a in unique_abstracts[:5]
+                    if a.get("pmid")
+                ]
+                if valid_pmids:
+                    reasoning_parts.append(f"Evidence PMIDs: {', '.join(valid_pmids)}.")
             if literature_summary:
-                reasoning_parts.append(literature_summary)
+                reasoning_parts.append(str(literature_summary))
 
             candidate.add_decision(
                 stage=self.stage_name,
@@ -441,9 +433,9 @@ class LiteratureAgent:
                 reasoning=" ".join(reasoning_parts),
                 pubmed_hits=len(unique_abstracts),
                 prior_validated=prior_validated,
-                evidence_pmids=[a["pmid"] for a in unique_abstracts[:10]],
+                evidence_pmids=[a["pmid"] for a in unique_abstracts[:10] if a.get("pmid")],
                 failure_signals=failure_signals,
-                literature_summary=literature_summary,
+                literature_summary=literature_summary or "",
                 search_time_s=elapsed,
                 query=primary_query,
                 result_count=len(unique_abstracts),
