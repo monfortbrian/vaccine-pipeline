@@ -968,9 +968,6 @@ async def _legacy_runs(request: Request, user: UserClaims = Depends(require_user
     per_page = int(request.query_params.get("per_page", 20))
     return await list_runs(user, page, per_page)
 
-app.include_router(legacy)
-
-# Add this endpoint
 @legacy.get("/pipeline/report/{run_id}")
 async def get_report(run_id: str, user: UserClaims = Depends(require_user)):
     from fastapi.responses import Response
@@ -981,6 +978,8 @@ async def get_report(run_id: str, user: UserClaims = Depends(require_user)):
         media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="TOPE_DEEP_{run_id[:8]}_report.pdf"'},
     )
+
+app.include_router(legacy)
 
 # ── Root ──────────────────────────────────────────────────────────────────────
 
