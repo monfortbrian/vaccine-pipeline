@@ -49,6 +49,8 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("tope_deep.api")
 
 
+from api.report_generator import generate_report_pdf
+
 # ── App ───────────────────────────────────────────────────────────────────────
 
 app = FastAPI(
@@ -968,6 +970,17 @@ async def _legacy_runs(request: Request, user: UserClaims = Depends(require_user
 
 app.include_router(legacy)
 
+# Add this endpoint
+@legacy.get("/pipeline/report/{run_id}")
+async def get_report(run_id: str, user: UserClaims = Depends(require_user)):
+    from fastapi.responses import Response
+    results = await get_results(run_id, user)
+    pdf_bytes = generate_report_pdf(results.model_dump(), run_id)
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="TOPE_DEEP_{run_id[:8]}_report.pdf"'},
+    )
 
 # ── Root ──────────────────────────────────────────────────────────────────────
 
