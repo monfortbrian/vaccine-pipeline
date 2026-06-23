@@ -7,7 +7,6 @@ Tools:
   Qdrant (in-memory)      : vector store for semantic similarity search
   sentence-transformers   : embed abstracts and epitope sequences
   Claude API (optional)   : synthesize evidence into structured summary
-
 """
 
 import os
@@ -32,7 +31,6 @@ QDRANT_URL     = os.getenv("QDRANT_URL", "")
 
 # ── Query builder ─────────────────────────────────────────────────────────────
 
-# Vaccine/immunology MeSH terms applied to ALL input types
 _VACCINE_TERMS = (
     '"T cell"[Title/Abstract] OR '
     '"epitope"[Title/Abstract] OR '
@@ -60,98 +58,57 @@ def _is_real_uniprot_id(protein_id: str) -> bool:
     """True if protein_id looks like a UniProt accession, not 'user_input'."""
     if not protein_id or protein_id == "user_input":
         return False
-    # UniProt accessions: 6 or 10 characters, alphanumeric
     return bool(re.match(r'^[A-Z0-9]{6,10}$', protein_id))
-
-
-def _extract_organism_from_decisions(decisions: list) -> Optional[str]:
-    """
-    Pull organism name from Agent 1 data_curation decision if available.
-    The reasoning field contains the organism name when input was a pathogen name.
-    Returns None if not found query adapts gracefully.
-    """
-    for d in (decisions or []):
-        if d.get("stage") == "data_curation":
-            reasoning = d.get("reasoning", "")
-            # Look for organism: "organism=bacteria|virus|parasite"
-            m = re.search(r'organism[_\s:=]+(\w+)', reasoning, re.IGNORECASE)
-            if m:
-                return m.group(1).lower()
-            # Also check explicit organism_class field
-            if d.get("organism_class"):
-                return str(d["organism_class"]).lower()
-    return None
 
 
 def _build_pubmed_query(candidate) -> str:
     """
-    Build a PubMed query adaptive to any input type:
-      - pathogen name  → protein name + vaccine terms (no organism hardcoded)
-      - uniprot_id     → protein name + UniProt accession as fallback OR term
-      - sequence       → protein name only (user-defined name, may be generic)
-
-    Rules:
-      1. Always strip UniProt parenthetical from protein name.
-      2. Never hardcode organism or pathogen name.
-      3. UniProt accession added as OR term only if it looks like a real accession.
-      4. For user_input sequences with generic names ("Custom protein"), query
-         by sequence keywords from Agent 3/Agent 6 decisions instead.
-      5. Parenthesise all AND/OR groups correctly.
+    Build a PubMed query adaptive to any input type.
+    Never hardcodes organism or pathogen name.
+    Always strips UniProt parenthetical from protein name.
     """
     protein_name = candidate.protein_name or ""
     protein_id   = candidate.protein_id   or ""
     source       = getattr(candidate, 'source', 'uniprot')
     decisions    = getattr(candidate, 'decisions', [])
 
-    clean_name   = _clean_protein_name(protein_name)
-    has_uniprot  = _is_real_uniprot_id(protein_id)
+    clean_name  = _clean_protein_name(protein_name)
+    has_uniprot = _is_real_uniprot_id(protein_id)
 
-    # ── Case 1: user-submitted sequence with generic name ──────────────────
-    # "Custom protein" or single-word names won't hit PubMed.
-    # Fall back to querying by any named epitopes from Agent 3.
+    # Case 1: user-submitted sequence with generic name
     if source == "user_input" or protein_id == "user_input":
         if not clean_name or clean_name.lower() in ("custom protein", "unknown", "protein"):
-            # Extract epitope sequences from Agent 3 decisions for targeted search
-            n3_decision = next((d for d in decisions if d.get("stage") == "tcell_prediction"), {})
             ctl_epitopes = [
                 ep.sequence for ep in (candidate.ctl_epitopes or [])
                 if hasattr(ep, 'sequence')
             ][:2]
             if ctl_epitopes:
                 ep_terms = " OR ".join(f'"{seq}"[Title/Abstract]' for seq in ctl_epitopes)
-                return (
-                    f'({ep_terms}) AND '
-                    f'({_VACCINE_TERMS})'
-                )
-            # Nothing to query on return broad vaccine immunology
+                return f'({ep_terms}) AND ({_VACCINE_TERMS})'
             return f'("vaccine epitope"[Title/Abstract]) AND ({_VACCINE_TERMS})'
 
-    # ── Case 2: Real protein name, with or without UniProt ID ─────────────
-    # Primary term: clean protein name in Title/Abstract
+    # Case 2: real protein name, with or without UniProt ID
     name_term = f'"{clean_name}"[Title/Abstract]'
 
-    # Optional: add UniProt accession as OR term (some papers cite accessions)
     if has_uniprot:
-        id_term  = f'"{protein_id}"[Title/Abstract]'
-        subject  = f'({name_term} OR {id_term})'
+        id_term = f'"{protein_id}"[Title/Abstract]'
+        subject = f'({name_term} OR {id_term})'
     else:
-        subject  = f'({name_term})'
+        subject = f'({name_term})'
 
-    query = f'{subject} AND ({_VACCINE_TERMS})'
-    return query
+    return f'{subject} AND ({_VACCINE_TERMS})'
 
 
 def _build_fallback_query(candidate) -> str:
     """
-    Fallback query when primary returns 0 results.
-    Broadens scope: drops vaccine terms, searches name OR accession alone.
-    For user_input with no name, skips PubMed entirely.
+    Fallback when primary returns 0 results.
+    Drops vaccine terms, searches name OR accession alone.
     """
     protein_name = candidate.protein_name or ""
     protein_id   = candidate.protein_id   or ""
 
-    clean_name   = _clean_protein_name(protein_name)
-    has_uniprot  = _is_real_uniprot_id(protein_id)
+    clean_name  = _clean_protein_name(protein_name)
+    has_uniprot = _is_real_uniprot_id(protein_id)
 
     if has_uniprot and clean_name:
         return f'("{clean_name}"[Title/Abstract] OR "{protein_id}"[Title/Abstract])'
@@ -160,17 +117,12 @@ def _build_fallback_query(candidate) -> str:
     elif clean_name and clean_name.lower() not in ("custom protein", "unknown"):
         return f'"{clean_name}"[Title/Abstract]'
     else:
-        return ""  # Empty = skip fallback, no useful query available
+        return ""
 
 
 # ── PubMed fetch ──────────────────────────────────────────────────────────────
 
 def _fetch_pubmed_abstracts(query: str, max_results: int = MAX_ABSTRACTS) -> List[Dict]:
-    """
-    Search PubMed and fetch abstracts.
-    Returns list of {pmid, title, abstract, journal, year}.
-    Rate limits: 10 req/s with API key, 3/s without.
-    """
     try:
         search_resp = requests.get(
             f"{PUBMED_BASE}/esearch.fcgi",
@@ -190,7 +142,6 @@ def _fetch_pubmed_abstracts(query: str, max_results: int = MAX_ABSTRACTS) -> Lis
             logger.info(f"Agent 9: PubMed returned 0 PMIDs for query: {query[:80]}")
             return []
 
-        # Respect rate limits
         time.sleep(0.1 if PUBMED_API_KEY else 0.34)
 
         fetch_resp = requests.get(
@@ -242,9 +193,9 @@ def _get_qdrant_client():
     try:
         from qdrant_client import QdrantClient
         if QDRANT_URL:
-            logger.info(f"Agent 9: Qdrant → {QDRANT_URL}")
+            logger.info(f"Agent 9: Qdrant {QDRANT_URL}")
             return QdrantClient(url=QDRANT_URL)
-        logger.info("Agent 9: Qdrant → in-memory")
+        logger.info("Agent 9: Qdrant in-memory")
         return QdrantClient(":memory:")
     except ImportError:
         logger.warning("Agent 9: qdrant-client not installed, falling back to ChromaDB")
@@ -359,14 +310,14 @@ Literature:
         resp = requests.post(
             "https://api.anthropic.com/v1/messages",
             headers={
-                "x-api-key": api_key,
+                "x-api-key":         api_key,
                 "anthropic-version": "2023-06-01",
-                "content-type": "application/json",
+                "content-type":      "application/json",
             },
             json={
-                "model":      "claude-sonnet-4-6",
+                "model":    "claude-sonnet-4-6",
                 "max_tokens": 300,
-                "messages":   [{"role": "user", "content": prompt}],
+                "messages": [{"role": "user", "content": prompt}],
             },
             timeout=20,
         )
@@ -390,7 +341,7 @@ class LiteratureAgent:
         if self._qdrant is None:
             self._qdrant = _get_qdrant_client()
             if self._qdrant is None:
-                self._qdrant    = _get_chroma_client()
+                self._qdrant     = _get_chroma_client()
                 self._use_qdrant = False
         if self._embedder is None:
             self._embedder = _get_embedder()
@@ -406,9 +357,10 @@ class LiteratureAgent:
             logger.info(f"   [{i+1}/{len(active)}] {candidate.protein_name}")
             start = time.time()
 
+            # FIX: define clean_name BEFORE it is used anywhere in this loop
+            clean_name = _clean_protein_name(candidate.protein_name or "")
+
             # ── PRIMARY QUERY ────────────────────────────────────────────────
-            # Adaptive query, handles pathogen/uniprot/sequence input types.
-            # No hardcoded organism. No UniProt ID in parentheses.
             primary_query = _build_pubmed_query(candidate)
             logger.info(f"      Query: {primary_query[:120]}")
             abstracts = _fetch_pubmed_abstracts(primary_query)
@@ -435,8 +387,8 @@ class LiteratureAgent:
                 epitope_abstracts.extend(ep_abs)
 
             # ── DEDUPLICATE ───────────────────────────────────────────────
-            all_abstracts  = abstracts + epitope_abstracts
-            seen_pmids     = set()
+            all_abstracts    = abstracts + epitope_abstracts
+            seen_pmids       = set()
             unique_abstracts = []
             for a in all_abstracts:
                 if a["pmid"] not in seen_pmids:
@@ -445,8 +397,8 @@ class LiteratureAgent:
 
             logger.info(f"      {len(unique_abstracts)} unique abstracts")
 
-            failure_signals  = _detect_failure_signals(unique_abstracts)
-            prior_validated  = any(
+            failure_signals = _detect_failure_signals(unique_abstracts)
+            prior_validated = any(
                 ep.sequence in (a.get("abstract", "") + a.get("title", ""))
                 for ep in high_conf_epitopes
                 for a in unique_abstracts
@@ -462,6 +414,7 @@ class LiteratureAgent:
                     logger.info(f"      Indexed {len(unique_abstracts)} abstracts in Qdrant")
 
             # ── CLAUDE SYNTHESIS ──────────────────────────────────────────
+            # FIX: clean_name is now defined above, no longer used before assignment
             literature_summary = _synthesize_with_claude(
                 clean_name,
                 unique_abstracts,
@@ -470,8 +423,6 @@ class LiteratureAgent:
 
             elapsed = round(time.time() - start, 1)
 
-            # Clean reasoning, scientific content only
-            clean_name = _clean_protein_name(candidate.protein_name or "")
             reasoning_parts = [
                 f"PubMed search for '{clean_name}' returned {len(unique_abstracts)} abstracts.",
                 f"Prior experimental validation: {prior_validated}.",
