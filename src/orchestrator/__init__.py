@@ -144,7 +144,7 @@ class PipelineOrchestrator:
             t = time.time()
             candidates = self.n6.run(candidates)
             timings["n6_safety"] = round(time.time() - t, 2)
-        _cb("N6", 0.72, "N6 complete" if run_safety else "N6 skipped")
+        _cb("N6", 0.72, "Safety filter complete" if run_safety else "Safety filter skipped")
 
         # Coverage Agent
         if run_coverage:
@@ -152,14 +152,14 @@ class PipelineOrchestrator:
             t = time.time()
             candidates = self.n7.run(candidates)
             timings["n7_coverage"] = round(time.time() - t, 2)
-        _cb("N7", 0.82, "N7 complete" if run_coverage else "N7 skipped")
+        _cb("N7", 0.82, "Population coverage complete" if run_coverage else "Coverage skipped")
 
         # Construct Designer
         _cb("N8", 0.83, "Assembling multi-epitope construct: ProtParam, adjuvant, linkers...")
         t = time.time()
         candidates, construct_report = self.n8.run(candidates)
         timings["n8_construct"] = round(time.time() - t, 2)
-        _cb("N8", 0.88, "N8 complete")
+        _cb("N8", 0.88, "Construct assembly complete")
 
         # Literature Agent
         if run_literature:
