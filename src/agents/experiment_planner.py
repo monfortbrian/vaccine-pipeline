@@ -1,15 +1,12 @@
 """
 EXPERIMENT PLANNER AGENT
 Generates a prioritized wet-lab validation roadmap for each candidate.
-
-
 """
 
 import os
 import re
 import json
 import time
-import logging
 import requests
 from typing import List, Dict, Any, Optional
 
@@ -60,8 +57,8 @@ def _template_plan(candidate: CandidateProtein, context: Dict) -> Dict:
             for ep in high_ctl
         ],
         "phase_1": {
-            "timeline":     "Week 1–4",
-            "key_assay":    "PBMC IFN-γ ELISpot",
+            "timeline":          "Week 1–4",
+            "key_assay":         "PBMC IFN-γ ELISpot",
             "protocol_notes": (
                 f"Synthesise top {min(5, len(high_ctl))} CTL peptides (9–11mer, >95% purity). "
                 f"Stimulate PBMCs from HLA-typed donors at 10 μg/mL. "
@@ -69,12 +66,12 @@ def _template_plan(candidate: CandidateProtein, context: Dict) -> Dict:
                 f"Threshold: ≥2× background AND ≥50 SFU/10⁶ = positive."
             ),
             "expected_cost_usd": "$3,000–$8,000",
-            "go_criteria":  "≥2 of top 5 epitopes elicit IFN-γ in ≥2 HLA-matched donors",
-            "reference":    "Janetzki et al. (2015) Cancer Immunol Immunother 64:1695–1703",
+            "go_criteria":       "≥2 of top 5 epitopes elicit IFN-γ in ≥2 HLA-matched donors",
+            "reference":         "Janetzki et al. (2015) Cancer Immunol Immunother 64:1695–1703",
         },
         "phase_2": {
-            "timeline":     "Month 1–3",
-            "key_assay":    (
+            "timeline":  "Month 1–3",
+            "key_assay": (
                 "Murine immunisation (C57BL/6, BALB/c)"
                 if mouse_reactive else
                 "Skip, no H-2 cross-reactive epitopes predicted"
@@ -86,19 +83,19 @@ def _template_plan(candidate: CandidateProtein, context: Dict) -> Dict:
                 f"Cross-reactive epitopes: {', '.join(ep.sequence for ep in mouse_reactive) or 'none'}."
             ) if mouse_reactive else "No H-2 cross-reactive epitopes, proceed directly to phase 3.",
             "expected_cost_usd": "$5,000–$15,000" if mouse_reactive else "$0 (skipped)",
-            "go_criteria":  "CD8+ T-cell response in ≥3/5 mice, ≥0.5% antigen-specific cells",
+            "go_criteria":       "CD8+ T-cell response in ≥3/5 mice, ≥0.5% antigen-specific cells",
         },
         "phase_3": {
-            "timeline":     "Month 3–6",
-            "key_assay":    "MHC-I tetramer staining",
+            "timeline":          "Month 3–6",
+            "key_assay":         "MHC-I tetramer staining",
             "protocol_notes": (
                 "Produce HLA-A*02:01 tetramers for top CTL epitopes. "
                 "Stain PBMCs from HLA-A*02:01+ donors. "
                 "Confirms antigen-specific T-cell frequency directly."
             ),
             "expected_cost_usd": "$10,000–$30,000",
-            "go_criteria":  "Tetramer+ CD8+ T cells >0.1% of total CD8+ in ≥2 donors",
-            "reference":    "Klenerman et al. (2002) Nat Rev Immunol 2:263–272",
+            "go_criteria":       "Tetramer+ CD8+ T cells >0.1% of total CD8+ in ≥2 donors",
+            "reference":         "Klenerman et al. (2002) Nat Rev Immunol 2:263–272",
         },
         "critical_risks": failure_sigs + (
             ["Prior experimental validation exists, review published HLA restrictions before synthesis"]
@@ -118,7 +115,7 @@ def _template_plan(candidate: CandidateProtein, context: Dict) -> Dict:
         "immunisation_schedule": (
             "Day 0:  Prime - peptide (100 μg) + CFA, subcutaneous.\n"
             "Day 14: Boost - peptide (50 μg) + IFA, subcutaneous.\n"
-            "Day 21: Harvest -  terminal bleed, splenocyte isolation.\n"
+            "Day 21: Harvest - terminal bleed, splenocyte isolation.\n"
             "Day 22: ICS and ELISpot readout."
         ),
         "nhp_plan": (
@@ -152,8 +149,7 @@ def _template_plan(candidate: CandidateProtein, context: Dict) -> Dict:
 def _claude_plan(candidate: CandidateProtein, context: Dict) -> Optional[Dict]:
     """
     Generate structured wet-lab plan via Claude API.
-    Returns None on any failure, caller must fall back to template.
-    FIX: explicit JSON parse with fallback, no silent None return on bad JSON.
+    Returns None on any failure, caller always falls back to template.
     """
     api_key = os.getenv("ANTHROPIC_API_KEY", "")
     if not api_key:
@@ -168,17 +164,14 @@ def _claude_plan(candidate: CandidateProtein, context: Dict) -> Optional[Dict]:
 
     mouse_reactive = [
         ep.sequence for ep in candidate.ctl_epitopes
-        if (ep.tool_outputs or {}).get("animal_model_alleles") and ep.allergenicity_safe is True
+        if (ep.tool_outputs or {}).get("animal_model_alleles")
+        and ep.allergenicity_safe is True
     ][:5]
-
-mamu_reactive = [
-    ep.sequence for ep in candidate.ctl_epitopes
-    if (ep.tool_outputs or {}).get("mamu_alleles") and ep.allergenicity_safe is True
-][:3]
 
     mamu_reactive = [
         ep.sequence for ep in candidate.ctl_epitopes
-        if ep.tool_outputs.get("mamu_alleles") and ep.allergenicity_safe is True
+        if (ep.tool_outputs or {}).get("mamu_alleles")
+        and ep.allergenicity_safe is True
     ][:3]
 
     prompt = f"""You are an expert computational immunologist at a vaccine research institute.
@@ -241,19 +234,26 @@ Return ONLY a JSON object with this exact structure (no markdown, no preamble):
         resp = requests.post(
             "https://api.anthropic.com/v1/messages",
             headers={
-                "x-api-key":          api_key,
-                "anthropic-version":  "2023-06-01",
-                "content-type":       "application/json",
+                "x-api-key":         api_key,
+                "anthropic-version": "2023-06-01",
+                "content-type":      "application/json",
             },
             json={
-                "model":    "claude-sonnet-4-6",
+                "model":      "claude-sonnet-4-6",
                 "max_tokens": 1200,
-                "messages": [{"role": "user", "content": prompt}],
+                "messages":   [{"role": "user", "content": prompt}],
             },
             timeout=30,
         )
         resp.raise_for_status()
-        text = resp.json()["content"][0]["text"].strip()
+
+        data    = resp.json()
+        content = data.get("content", [])
+        if not content or content[0].get("type") != "text":
+            logger.warning("Agent 10: Claude returned empty or non-text content, using template")
+            return None
+
+        text = content[0]["text"].strip()
 
         # Strip markdown fences if Claude adds them despite instructions
         text = re.sub(r'^```json\s*', '', text)
@@ -264,10 +264,10 @@ Return ONLY a JSON object with this exact structure (no markdown, no preamble):
         return parsed
 
     except json.JSONDecodeError as e:
-        logger.warning(f"Agent 10: Claude returned invalid JSON: {e} using template")
+        logger.warning(f"Agent 10: Claude returned invalid JSON: {e}, using template")
         return None
     except Exception as e:
-        logger.warning(f"Agent 10: Claude plan failed: {e} using template")
+        logger.warning(f"Agent 10: Claude plan failed: {e}, using template")
         return None
 
 
@@ -275,9 +275,9 @@ Return ONLY a JSON object with this exact structure (no markdown, no preamble):
 
 class ExperimentPlannerAgent:
     """
-    Experiment Planner Agent
+    Experiment Planner Agent.
     Uses Claude when ANTHROPIC_API_KEY is set.
-    Always falls back to template, never produces empty output.
+    Always falls back to template never produces empty output.
     """
 
     def __init__(self):
@@ -319,23 +319,18 @@ class ExperimentPlannerAgent:
 
             # Try Claude first, template is guaranteed fallback
             plan = _claude_plan(candidate, context)
-            if plan is None:
-                plan = _template_plan(candidate, context)
+            if not plan:
+                plan              = _template_plan(candidate, context)
                 generation_method = "template"
             else:
                 generation_method = "claude-sonnet-4-6"
 
-            # Guarantee plan is never None or empty
-            if not plan:
-                plan = _template_plan(candidate, context)
-                generation_method = "template"
-
             elapsed = round(time.time() - start, 1)
 
-            # Scientific reasoning only no internal method names
             priority_count = len([
                 ep for ep in candidate.ctl_epitopes
-                if ep.confidence_tier == ConfidenceTier.HIGH and ep.allergenicity_safe is True
+                if ep.confidence_tier == ConfidenceTier.HIGH
+                and ep.allergenicity_safe is True
             ])
 
             candidate.add_decision(
@@ -347,8 +342,6 @@ class ExperimentPlannerAgent:
                     f"Plan covers ELISpot (phase 1), murine model (phase 2), MHC tetramer (phase 3). "
                     f"Lab constraints: {lab_constraints}."
                 ),
-                # FIX: use 'plan' key, this is what the frontend reads
-                # from decisions[].plan in results page ExperimentSection
                 plan=plan,
                 lab_constraints=lab_constraints,
                 plan_time_s=elapsed,
