@@ -228,7 +228,11 @@ def _index_abstracts_qdrant(client, collection_name: str, abstracts: List[Dict],
         from qdrant_client.models import Distance, VectorParams, PointStruct
         texts   = [f"{a['title']} {a['abstract']}" for a in abstracts]
         vectors = embedder.encode(texts, show_progress_bar=False).tolist()
-        client.recreate_collection(
+        try:
+            client.delete_collection(collection_name=collection_name)
+        except Exception:
+            pass
+        client.create_collection(
             collection_name=collection_name,
             vectors_config=VectorParams(size=len(vectors[0]), distance=Distance.COSINE),
         )
