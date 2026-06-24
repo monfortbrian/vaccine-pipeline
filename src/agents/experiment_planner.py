@@ -35,7 +35,7 @@ def _template_plan(candidate: CandidateProtein, context: Dict) -> Dict:
 
     mouse_reactive = [
         ep for ep in candidate.ctl_epitopes
-        if ep.tool_outputs.get("animal_model_alleles")
+        if (ep.tool_outputs or {}).get("animal_model_alleles")
         and ep.allergenicity_safe is True
     ][:3]
 
@@ -168,8 +168,13 @@ def _claude_plan(candidate: CandidateProtein, context: Dict) -> Optional[Dict]:
 
     mouse_reactive = [
         ep.sequence for ep in candidate.ctl_epitopes
-        if ep.tool_outputs.get("animal_model_alleles") and ep.allergenicity_safe is True
+        if (ep.tool_outputs or {}).get("animal_model_alleles") and ep.allergenicity_safe is True
     ][:5]
+
+mamu_reactive = [
+    ep.sequence for ep in candidate.ctl_epitopes
+    if (ep.tool_outputs or {}).get("mamu_alleles") and ep.allergenicity_safe is True
+][:3]
 
     mamu_reactive = [
         ep.sequence for ep in candidate.ctl_epitopes
