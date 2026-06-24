@@ -971,6 +971,7 @@ async def _legacy_runs(request: Request, user: UserClaims = Depends(require_user
 @legacy.get("/pipeline/report/{run_id}")
 async def get_report(run_id: str, user: UserClaims = Depends(require_user)):
     from fastapi.responses import Response
+    from api.report_generator import generate_report_pdf
     results = await get_results(run_id, user)
     pdf_bytes = generate_report_pdf(results.model_dump(), run_id)
     return Response(
